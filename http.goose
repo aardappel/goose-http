@@ -213,16 +213,14 @@ fn supervise<SPAWN>(cfg: Config) {
     let n = worker_count(cfg);
     let stopped = stops();
     var cfgs: Config[>..] = [];
-    var started: i64[>..] = [];
-    var aborts: i64[>..] = [];
+    var restarts: Restarts[>..] = [];
     var held: Opened[>..] = [];
     for i in n {
         var c = cfg;
         c.worker = i;
         c.supervised = true;
         cfgs.push(c);
-        started.push(clock_ns());
-        aborts.push(0);
+        restarts.push(Restarts { limit: cfg.restarts, started: clock_ns(), .. });
         thread_spawn(watch, i, SPAWN(c));
     }
     var live = n;
@@ -249,29 +247,43 @@ fn supervise<SPAWN>(cfg: Config) {
             live--;
             continue;
         }
-        if clock_ns() - started[i] >= 60000000000 { aborts[i] = 0; }
-        aborts[i]++;
-        if aborts[i] > cfg.restarts {
-            write_stderr(str("worker ", i, " aborted: ", e.why, "\nworker ", i, " aborted ",
-                             aborts[i], " times in a row: ending the process\n"));
-            exit(1);
-        }
-        if stops() != stopped {
-            write_stderr(str("worker ", i, " aborted: ", e.why, "\n"));
+        if !restart_after(restarts[i], str("worker ", i), e.why, stops() != stopped) ||
+           stops() != stopped {
             live--;
             continue;
         }
-        let wait = 100 << min(aborts[i] - 1, 10);
-        write_stderr(str("worker ", i, " aborted: ", e.why, "\nworker ", i, " restarts in ",
-                         wait, " ms\n"));
-        sleep_ms(wait);
-        if stops() != stopped {
-            live--;
-            continue;
-        }
-        started[i] = clock_ns();
         thread_spawn(watch, i, SPAWN(cfgs[i]));
     }
+}
+
+// How often in a row a thread has aborted, for restarting it as run does:
+// limit is the most restarts in a row, as Config.restarts is, and started
+// when the thread last started, by clock_ns.
+struct Restarts { limit: i64 = 5, aborts: i64 = 0, started: i64 = 0 }
+
+// After the thread name aborted with message why: prints it, and returns
+// whether to start the thread again, once it's time. It ends the process
+// with exit code 1 at an abort that follows r.limit restarts in a row, and
+// returns false at once while stopping. Otherwise it waits 100 ms, twice as
+// long for each restart in a row before, and returns true. A thread that ran
+// for a minute starts a new count.
+fn restart_after(r: Restarts&, name: const u8[:], why: const u8[:], stopping: bool) -> bool {
+    if clock_ns() - r.started >= 60000000000 { r.aborts = 0; }
+    r.aborts++;
+    if r.aborts > r.limit {
+        write_stderr(str(name, " aborted: ", why, "\n", name, " aborted ", r.aborts,
+                         " times in a row: ending the process\n"));
+        exit(1);
+    }
+    if stopping {
+        write_stderr(str(name, " aborted: ", why, "\n"));
+        return false;
+    }
+    let wait = 100 << min(r.aborts - 1, 10);
+    write_stderr(str(name, " aborted: ", why, "\n", name, " restarts in ", wait, " ms\n"));
+    sleep_ms(wait);
+    r.started = clock_ns();
+    return true;
 }
 
 // The number of workers cfg asks for, which run spawns.

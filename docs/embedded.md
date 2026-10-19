@@ -248,3 +248,10 @@ reads garbage.
 
 A 32-bit process has about 3 GB of address space, too little for 64 MB per data stack:
 build with `--stack-reserve 16M`, as above.
+
+Each thread reserves its data stacks' address space, and a 16 MB reservation takes
+17 MB with its guard gap. `goose --stacks --stack-reserve 16M` lists each thread's
+count. Threads that only wait count too: `http::run` has a watcher per worker, one
+stack or 17 MB, and a lane thread that goose-rest restarts has a wrapper of two stacks,
+34 MB, besides its own. A 64-thread lane with restarts would take about 2.2 GB of the
+3 GB in wrappers alone: on 32-bit ARM, keep lanes small.

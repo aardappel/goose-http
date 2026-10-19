@@ -1,6 +1,7 @@
 # 050: Restart a worker that aborts
 
-Status: in-progress; `http::run` restarts workers on Linux and macOS (2026-10-19)
+Status: in-progress; `http::run` restarts workers on Linux and macOS, and its policy and
+`mail_adopt` are ready for goose-rest's lanes (2026-10-19)
 
 With `thread_spawn_contained` ([aardappel/goose#38](https://github.com/aardappel/goose/pull/38),
 in the pinned `dcc2747`), an abort ends only its thread, and `thread_wait` returns false
@@ -50,6 +51,13 @@ they give up, its ring's memory, and its box and waker.
       `ring_reap` stops the accept
 - [ ] Second step: what an aborted worker opened through C closed by `run` in every
       backend, so its clients get a reset, or a reason recorded for each part left
-- [ ] goose-rest's task 044: lanes restarted by a `thread_fn watch<W>` in `lane_open`,
-      once Goose lets a `thread_fn` take a function value (task 052); until then an
-      abort in a lane ends the process
+- [ ] Lanes: opt-in, through a `thread_fn` the program writes that calls goose-rest's
+      `rest::keep` (goose-rest's task 044), with no Goose change; task 052 cancelled
+      ([decision](../docs/decisions.md#lanes-restart-through-a-wrapper-the-program-writes))
+- [x] `run`'s policy shared as `http::restart_after` and `http::Restarts`, with
+      `run`'s output unchanged; `test/server/restarts.goose` covers the limit's exit
+- [x] `http::mail_adopt`: a box counts what its owner took and hasn't settled, so the
+      owner that takes over after an abort in `mail_take`'s callback settles it, and
+      `mail_stopped` comes true (`test/mail/mail_adopt.goose`)
+- [ ] The cost of `mail_adopt`'s count, a non-atomic add per message taken, measured
+      in the next overnight benchmark batch (unmeasured)

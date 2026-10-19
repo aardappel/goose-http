@@ -52,6 +52,7 @@ extern "mail_size" fn mail_size_c(box: u64) -> i32;
 extern "mail_slot_size" fn mail_slot_size_c(to: u64, key: u64) -> i32;
 extern "mail_take_one" fn mail_take_one_c(box: u64, out: u8[:], head: i64[:]) -> i64;
 extern "mail_settle" fn mail_settle_c(box: u64, n: i64) -> i32;
+extern "mail_adopt" fn mail_adopt_c(box: u64) -> i32;
 extern "mail_wait" fn mail_wait_c(box: u64, ms: i32) -> i32;
 extern "mail_stop" fn mail_stop_c(to: u64);
 extern "mail_queued" fn mail_queued_c(to: u64, key: u64) -> i64;
@@ -170,3 +171,9 @@ fn mail_take<F>(b: Box) -> i64 {
     }
     return total;
 }
+
+// For a thread that takes b over after its owner ended without settling, as
+// an abort in mail_take's F does: settles what that owner took, so that b's
+// count holds only what's still in it. Call it once thread_wait has returned
+// for the old owner, before taking. Returns whether b holds messages.
+fn mail_adopt(b: Box) -> bool { mail_adopt_c(key_of(b.handle)) != 0 }

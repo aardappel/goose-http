@@ -1,0 +1,4 @@
+lane 0 aborted: asked to fail
+lane 0 restarts in 200 ms
+lane 0 restarts in 400 ms
+lane 0 aborted 4 times in a row: ending the process

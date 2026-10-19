@@ -287,8 +287,9 @@ and the others serve on meanwhile
 and the others on that worker's connections, get no answer; their clients wait until
 they give up. A handler should still answer an error rather than abort where it can.
 
-An abort ends the whole process when it is in a lane or in a worker the program spawned
-itself, and when a worker has aborted `Config.restarts` times in a row. Run the server
+An abort ends the whole process when it is in a worker the program spawned itself, or in
+a lane that doesn't opt into restarts (goose-rest's `rest::keep`), and when a worker has
+aborted `Config.restarts` times in a row. Run the server
 under a service manager that restarts it, after a delay, and gives up after a few
 crashes in a row, so a crash that repeats at startup doesn't loop:
 

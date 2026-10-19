@@ -1,0 +1,15 @@
+abort in mail_take:
+  returned: false
+  queued before adopt: 4
+  adopt: true
+  queued after adopt: 2
+  took the rest: [3, 4]
+  pending after: false
+  stopped: true
+abort before a take:
+  returned: false
+  adopt: true
+  queued after adopt: 2
+  took the rest: [1, 2]
+  pending after: false
+  stopped: true

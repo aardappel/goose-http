@@ -326,6 +326,10 @@ else { http::respond(out, 503, "text/plain", "busy"); return; }
   http::mail_close(box);
   ```
 
+- `http::mail_adopt(box)` is for a thread that takes a box over after its owner
+  aborted inside `mail_take`'s callback, which settled nothing: called once
+  `thread_wait` has returned for that owner, it settles what the owner took, so that
+  `mail_stopped` can come true. goose-rest's `rest::keep` calls it.
 - `http::mail_queued(address)` gives any thread how many messages the box holds, to
   pick the least busy of several lane threads' boxes, or -1 for a `STALE` address or
   a stopped box. It's a snapshot, and counts the messages the owner's `mail_take` has
@@ -449,7 +453,9 @@ After `Config.restarts` aborts in a row, 5 by default, it ends the process with 
 code 1; 0 ends it at the first. A worker that ran for a minute starts a new count, and
 after a stop no worker is restarted. The aborted worker's connections stay open,
 unanswered ([crashes](patterns.md#crashes)). One `run` at a time in a process: it
-takes its workers' ends from Goose's queue of `http::WorkerEnded`.
+takes its workers' ends from Goose's queue of `http::WorkerEnded`. The policy is
+`http::restart_after(r, name, why, stopping)`, with an `http::Restarts` per thread, for
+a library that restarts threads of its own the same way, as goose-rest's lanes do.
 
 `Config.address` is where to listen: empty for every IPv4 address (127.0.0.1 on
 Windows), an IPv4 or IPv6 address, `"::"` for every address, IPv4 too unless

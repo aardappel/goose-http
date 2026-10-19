@@ -13,6 +13,9 @@
    from 0 to 1, so a burst costs one wakeup. The owner subtracts what it
    took (mail_settle) and takes again if more came meanwhile, so no wakeup is
    lost: the count reaches 1 again only from 0, through a send that wakes.
+   The owner also counts what it has taken and not settled, in a plain field
+   of its own, so that an owner taking over after an abort, which settled
+   nothing, can settle it (mail_adopt).
    The wakeup is the platform shim's (net_waker_*: an eventfd on Linux,
    EVFILT_USER on macOS, a completion packet on Windows).
 
@@ -144,6 +147,7 @@ typedef struct {
     mail_a32 enq;
     char pad1[60];
     uint32_t deq;
+    int64_t taken;          /* the owner's: taken, not yet settled */
     uint32_t mask, size, stride;
     mail_a64 pending;
     mail_a32 stopped;
@@ -414,6 +418,7 @@ int64_t mail_take_one(uint64_t key, mail_bytes out, mail_i64s head) {
     head.data[1] = s->tag;
     STORE32_RELEASE(&s->seq, b->deq + b->mask + 1);
     b->deq++;
+    b->taken++;
     return n;
 }
 
@@ -422,6 +427,20 @@ int64_t mail_take_one(uint64_t key, mail_bytes out, mail_i64s head) {
 int32_t mail_settle(uint64_t key, int64_t n) {
     mail_box *b = mail_own(key);
     if (!b) return 0;
+    if (n == 0) return LOAD64_ACQUIRE(&b->pending) > 0;
+    b->taken -= n;
+    return ADD64(&b->pending, -n) - n > 0;
+}
+
+/* For an owner that takes over the box after the previous one ended without
+   settling what it took, as an abort in mail_take's callback does: settles
+   that. The caller has joined the previous owner (thread_wait), which orders
+   this read of taken after its writes. Returns whether more are counted. */
+int32_t mail_adopt(uint64_t key) {
+    mail_box *b = mail_own(key);
+    if (!b) return 0;
+    int64_t n = b->taken;
+    b->taken = 0;
     if (n == 0) return LOAD64_ACQUIRE(&b->pending) > 0;
     return ADD64(&b->pending, -n) - n > 0;
 }

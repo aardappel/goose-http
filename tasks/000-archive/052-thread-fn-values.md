@@ -1,7 +1,17 @@
 # 052: Goose PR: a thread_fn that takes a function value
 
-Status: in-progress; the change is being built on `kaitk/goose`'s `thread-fn-values`
-(2026-10-19), and opens upstream once its description is reviewed
+Status: cancelled — not opened (2026-10-19, after a review of the change and its PR
+description)
+
+The change covered only `lane_open`'s two-argument form, the maintainer would likely ask
+for type generics on a `thread_fn` too, and lane restarts need no Goose change: a
+`thread_fn` the program writes calls goose-rest's generic `rest::keep`
+([decision](../../docs/decisions.md#lanes-restart-through-a-wrapper-the-program-writes)).
+The branch `thread-fn-values` (`5b3e92d`) stays on `kaitk/goose` with two known
+findings: a spawn from an `export fn` skips `CheckThreadGlobals`, and its docs used this
+repository's term "lane".
+
+What follows is the task as it stood.
 
 A `thread_fn` can't be generic in Goose, so a library that is handed a `thread_fn`
 can't write a watcher thread that starts it again after an abort: the watcher would

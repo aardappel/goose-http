@@ -261,8 +261,9 @@ serve on: Tina's "let it crash", which restarts one Isolate and keeps the rest o
 shard running. A worker that keeps aborting is restarted after 100 ms, then twice as
 long each time, and after `Config.restarts` aborts in a row, 5 by default, `run` ends
 the process with exit code 1, for the service manager to restart
-([crashes](patterns.md#crashes)). A program that spawns its own workers, and every lane
-for now, still ends the process on an abort.
+([crashes](patterns.md#crashes)). A program that spawns its own workers still ends the
+process on an abort, and so does a lane unless it opts in
+([lanes restart through a wrapper](#lanes-restart-through-a-wrapper-the-program-writes)).
 
 A `thread_fn` can't be generic, so a watcher thread can't start the program's worker
 again. Each worker has a small `thread_fn watch` that waits for it and puts how it
@@ -283,6 +284,31 @@ rest stays open, bounded by `Config.restarts`: its connections, whose clients ge
 answer until they give up, its ring's memory, and its box; closing them is task 050's
 next step. Each worker also has its watch thread, mostly blocked, which costs a
 thread's stacks.
+
+## Lanes restart through a wrapper the program writes
+
+Decided 2026-10-19, task 050; it replaces waiting for a Goose change (task 052).
+
+A lane thread that should survive an abort is restarted by a `thread_fn` the program
+writes, which calls goose-rest's generic `rest::keep` with the spawn of the lane's own
+`thread_fn`. Since Goose `fb5698125`, a generic plain `fn` called from a `thread_fn` can
+spawn the `thread_fn` it is handed, so the wrapper needs no Goose change. The cost is
+three lines per lane that opts in. A `thread_fn` that takes a function value would have
+saved them, but it covered only one form of `lane_open`, and the maintainer would ask
+for type generics as well.
+
+goose-http gives the restart two pieces, so that a lane restarts as a worker does:
+
+- `http::restart_after` with an `http::Restarts` per thread is `run`'s policy: 100 ms,
+  doubling, and the process ended after `Config.restarts` aborts in a row, 5 by
+  default.
+- `http::mail_adopt` settles what an aborted owner took. `mail_take` settles a round's
+  messages after its callback returns, so an abort inside it leaves them counted, and
+  the next owner's `mail_stopped` never came true: `lane_stop` hung. The box now
+  counts what its owner took and hasn't settled, in a plain field only the owner
+  writes, which the new owner reads once `thread_wait` has joined the old one. It
+  costs a non-atomic add per message taken; `mail_take` still settles each round
+  with one atomic.
 
 ## A stop is a flag in the box, not a message
 
