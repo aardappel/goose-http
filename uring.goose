@@ -340,13 +340,13 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
             // The ring sends the file in order, so answering goes on.
             if c.x.stream.file >= 0 {
                 send_file(c);
-                if c.state == OPEN && !blocked(c) && !holds_input(c.x) { continue; }
+                if c.state == OPEN && !blocked(c) && !holds_input(&c.x) { continue; }
             }
             if c.state != OPEN {
                 rlen = 0;
                 break;
             }
-            if blocked(c) || holds_input(c.x) {
+            if blocked(c) || holds_input(&c.x) {
                 hold(c, buf, src, off, n);
                 if blocked(c) || c.held.len >= rbuf.len {
                     c.stalled = true;
@@ -487,7 +487,7 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
     fn take(c: RingConn<S>&, buf: i32, src: const u8[:], n: i64) {
         // A connection that isn't OPEN drops what arrives.
         if c.state != OPEN {
-        } else if c.stalled || holds_input(c.x) {
+        } else if c.stalled || holds_input(&c.x) {
             let m = c.held.len;
             if m == 0 { c.x.since = now; }
             c.held = if m == 0 { spill.alloc_slice(n) } else { spill.realloc_slice(c.held, m + n) };
