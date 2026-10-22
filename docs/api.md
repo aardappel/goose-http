@@ -887,7 +887,8 @@ fn main() {
   behavior: handlers don't change, and a stop sends GOAWAY.
 - A loop's TLS listeners share its one context, and so one ALPN list. A program that
   wants `h2` on one port and only `http/1.1` on another runs a second set of workers
-  with a second context.
+  with a second context. A connection can move to another context at its ClientHello
+  ([below](#https)).
 - `http::serve(cfg, server) { req, body, out => ... }` and
   `http::serve(cfg, fresh, server) { ev, st, out => ... }` are the two `serve`s with
   the TLS of the listeners that ask for it, and `http::serve_epoll` takes the same
@@ -907,4 +908,57 @@ name a PEM certificate chain and its key: on its port + 1 and its port + 363, as
 HttpArena's 8081 and 8443 are beside 8080, from one context
 ([decisions](decisions.md#the-benchmark-server-offers-h2-on-both-tls-ports)).
 `TLS_PORT` and `H2_PORT` name other ports, and 0 turns either off.
+
+**A context per connection.** A program can move a connection to another context at its ClientHello, from the name
+the client sent in SNI and the protocols it offered in ALPN: a certificate per host
+name, a renewed certificate for new connections while open ones keep theirs, or
+ACME's TLS-ALPN-01 challenge (RFC 8737), where a client offering `acme-tls/1` for the
+challenged name gets the challenge certificate and every other client the server's,
+on the same port
+([decisions](decisions.md#the-program-chooses-a-connections-context-at-its-clienthello)):
+
+```rust
+struct Chooser { challenge: tls::Context }
+
+// Called for each connection paused at its ClientHello; without use_context the
+// connection keeps the context it was accepted from.
+fn http::tls_hello(c: Chooser&, conn: tls::Conn) {
+    if tls::server_name(conn) == "example.com" && tls::offers(conn, "acme-tls/1") {
+        tls::use_context(conn, c.challenge);
+    }
+}
+
+thread_fn worker(cfg: http::Config, ctx: tls::Context, c: Chooser) {
+    var server = http::tls_server(ctx, c);
+    let e = http::serve(cfg, false, server) { ev, st, out => ... };
+    http::release(server);
+    http::report(e);
+}
+
+fn main() {
+    let ctx, ok = tls::server_files("server.crt", "server.key", ["h2", "http/1.1"]);
+    tls::choose_context(ctx);      // once, before any worker accepts
+    let challenge, cok = tls::server(cert, key, ["acme-tls/1"]);
+    http::run(cfg, ctx, Chooser { challenge: challenge }, worker);
+}
+```
+
+- `tls::choose_context(ctx)`, goose-tls's, makes each handshake from `ctx` pause
+  after the ClientHello. Call it once, before the workers start.
+- `http::tls_server(ctx, chooser)` gives a worker an `http::TlsServerOf<C>`, which
+  holds the chooser, a value of the program's own type `C`; `http::TlsServer` is the
+  one without a chooser. `http::release(server)` frees the server's reference to
+  `ctx`; the contexts the chooser holds are the program's to free.
+- At the pause the handshake calls `http::tls_hello(chooser, conn)`, which the program
+  declares in the namespace `http` for its chooser's type, then goes on.
+  `tls::server_name(conn)`, `tls::offers(conn, protocol)`, and `tls::use_context(conn,
+  other)` are goose-tls's ([its architecture](https://github.com/kaitk/goose-tls/blob/main/docs/architecture.md#a-context-per-connection)).
+  The context moved to answers with its own certificate and ALPN list, so a
+  connection moved to one that lists only `acme-tls/1` is served HTTP/1.1, which an
+  ACME server closes after the handshake.
+- The chooser is the worker's own and changes only in `tls_hello`, so a challenge or
+  a renewed certificate from another thread reaches it as the program arranges: for
+  instance, mail to each worker that `tls_hello` takes at the next hello.
+- With a chooser, a worker calls `serve` or `serve_epoll` with `fresh`: the forms
+  without it take only an `http::TlsServer`.
 

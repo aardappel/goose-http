@@ -21,6 +21,16 @@
 //       http::exit_on_error(http::serve_epoll(cfg, fresh, server) { ev, st, out => ... });
 //       http::release(server);
 //   }
+//
+// A program that picks each connection's context at its ClientHello, as
+// ACME's TLS-ALPN-01 needs, calls tls::choose_context(ctx) once before the
+// workers start, gives each worker's server a value of its own type
+// (tls_server(ctx, chooser)), and declares tls_hello for that type in this
+// namespace, which the handshake calls once a connection:
+//
+//   fn http::tls_hello(c: Chooser&, conn: tls::Conn) {
+//       if tls::offers(conn, "acme-tls/1") && ... { tls::use_context(conn, c.challenge); }
+//   }
 namespace http;
 
 import std;
@@ -39,22 +49,44 @@ struct TlsSlot {
 
 // A worker's TLS: the context its connections are accepted from, the
 // buffer the socket's bytes are read into before they're fed to OpenSSL,
-// and each connection's state, by the slot EpollConn.tls or RingConn.tls
-// names, with the first free one.
-struct TlsServer {
+// the program's value that tls_hello is given for each connection paused at
+// its ClientHello, and each connection's state, by the slot EpollConn.tls or
+// RingConn.tls names, with the first free one. The chooser comes after the
+// fields the loops read most: an empty struct takes a byte, which would move
+// them.
+struct TlsServerOf<C> {
     ctx: tls::Context,
     free: i32 = -1,
     wire: u8[16384],
+    chooser: C,
     slots: TlsSlot[>..],
 }
+
+// A server whose connections keep the context they're accepted from.
+struct OneContext {}
+type TlsServer = TlsServerOf<OneContext>;
+
+// A connection whose context was given to tls::choose_context, paused at its
+// ClientHello, keeps that context: the program has no chooser.
+fn tls_hello(c: OneContext&, conn: tls::Conn) {}
 
 // A worker's TlsServer, on its own reference to ctx, which release frees.
 fn tls_server(ctx: tls::Context) -> TlsServer {
     return TlsServer { ctx: tls::share(ctx), .. };
 }
 
-// Frees t's reference to its context, once its loop has returned.
-fn release(t: TlsServer&) {
+// A worker's server, on its own reference to ctx, that calls
+// tls_hello(chooser, conn) for each connection paused at its ClientHello,
+// once the program has called tls::choose_context(ctx). The program declares
+// that tls_hello in the namespace http; it may move the connection with
+// tls::use_context, and the handshake then goes on.
+fn tls_server(ctx: tls::Context, chooser) {
+    return TlsServerOf { ctx: tls::share(ctx), chooser: chooser, .. };
+}
+
+// Frees t's reference to its context, once its loop has returned. Contexts
+// the chooser holds are the program's to free.
+fn release<C>(t: TlsServerOf<C>&) {
     tls::free(t.ctx);
     t.ctx = tls::Context { .. };
 }
@@ -64,8 +96,10 @@ fn serve_epoll<H>(cfg: Config, t: TlsServer&) -> Error {
     return epoll_loop(cfg, false, t) { ev, st, out => whole(ev, out, H); };
 }
 
-// serve_epoll(cfg, fresh), whose listeners with tls serve it with t.
-fn serve_epoll<S, H>(cfg: Config, fresh: S, t: TlsServer&) -> Error {
+// serve_epoll(cfg, fresh), whose listeners with tls serve it with t. The
+// form without fresh takes no chooser: serve_epoll(cfg, t) would be as
+// generic as serve_epoll(cfg, fresh).
+fn serve_epoll<S, C, H>(cfg: Config, fresh: S, t: TlsServerOf<C>&) -> Error {
     return epoll_loop(cfg, fresh, t, H);
 }
 
@@ -76,15 +110,15 @@ fn serve<H>(cfg: Config, t: TlsServer&) -> Error {
 }
 
 // serve(cfg, fresh), whose listeners with tls serve it with t.
-fn serve<S, H>(cfg: Config, fresh: S, t: TlsServer&) -> Error {
+fn serve<S, C, H>(cfg: Config, fresh: S, t: TlsServerOf<C>&) -> Error {
     return ring_loop(cfg, fresh, t, H);
 }
 
-fn tls_serves(t: TlsServer&) -> bool { tls::ok(t.ctx) }
+fn tls_serves<C>(t: TlsServerOf<C>&) -> bool { tls::ok(t.ctx) }
 
 // A connection for a socket just accepted: its slot, or -1 when OpenSSL
 // can't make one.
-fn tls_open(t: TlsServer&) -> i32 {
+fn tls_open<C>(t: TlsServerOf<C>&) -> i32 {
     let c = tls::accept(t.ctx);
     guard tls::ok(c) else { return -1; }
     let s = TlsSlot { conn: c, ready: false, notified: false };
@@ -98,20 +132,24 @@ fn tls_open(t: TlsServer&) -> i32 {
     return (t.slots.len - 1) as i32;
 }
 
-fn tls_ready(t: TlsServer&, k: i32) -> bool { t.slots[k].ready }
+fn tls_ready<C>(t: TlsServerOf<C>&, k: i32) -> bool { t.slots[k].ready }
 
 // Whether slot k's client chose h2 by ALPN, once its handshake is done: the
 // context lists "h2" (tls::server's protocols), and the client offered it.
 // The loops ask once a connection, and keep the answer.
-fn tls_h2(t: TlsServer&, k: i32) -> bool { tls::alpn(t.slots[k].conn) == "h2" }
+fn tls_h2<C>(t: TlsServerOf<C>&, k: i32) -> bool { tls::alpn(t.slots[k].conn) == "h2" }
 
 // Reads plaintext into buf from what slot k holds, through its handshake
 // first, until buf is full or OpenSSL wants more input. Returns the count,
 // and whether the connection is done after it: the client sent
 // close_notify, or the handshake or a record failed.
-fn tls_plain(s: TlsSlot&, buf: u8[:]) -> i64, bool {
+fn tls_plain(s: TlsSlot&, buf: u8[:], chooser) -> i64, bool {
     if !s.ready {
-        let h = tls::handshake(s.conn);
+        var h = tls::handshake(s.conn);
+        if h == tls::HELLO {
+            tls_hello(chooser, s.conn);
+            h = tls::handshake(s.conn);
+        }
         if h == 0 { s.ready = true; }
         else if h != tls::WANT_INPUT { return 0, true; }
     }
@@ -137,12 +175,12 @@ fn tls_plain(s: TlsSlot&, buf: u8[:]) -> i64, bool {
 // the connection is done: the client closed it, sent close_notify, or failed
 // the handshake. What came before a close_notify is returned first, and the
 // next call returns the close.
-fn tls_recv(t: TlsServer&, k: i32, fd: i32, buf: u8[:]) -> i64, bool {
+fn tls_recv<C>(t: TlsServerOf<C>&, k: i32, fd: i32, buf: u8[:]) -> i64, bool {
     let s .= t.slots[k];
     guard buf.len > 0 else { return -1, false; }
     var empty = false;
     loop {
-        let got, done = tls_plain(s, buf);
+        let got, done = tls_plain(s, buf, t.chooser);
         if got > 0 { return got, !done && empty && got < buf.len; }
         guard !done else { return -1, false; }
         if tls::pending(s.conn) > 0 { return 0, false; }
@@ -160,13 +198,13 @@ fn tls_recv(t: TlsServer&, k: i32, fd: i32, buf: u8[:]) -> i64, bool {
 // them to slot k, and appends to out the plaintext they complete. False once
 // the connection is done, after what came before; its alert, if any, waits
 // for tls_seal.
-fn tls_take(t: TlsServer&, k: i32, bytes: const u8[:], out: u8[>..]&) -> bool {
+fn tls_take<C>(t: TlsServerOf<C>&, k: i32, bytes: const u8[:], out: u8[>..]&) -> bool {
     let s .= t.slots[k];
     guard tls::feed(s.conn, bytes) == bytes.len else { return false; }
     loop {
         let end = out.len;
         out.resize(end + t.wire.len, 0);
-        let got, done = tls_plain(s, out[end..]);
+        let got, done = tls_plain(s, out[end..], t.chooser);
         out.resize(end + got, 0);
         guard !done else { return false; }
         if got < t.wire.len { return true; }
@@ -176,7 +214,7 @@ fn tls_take(t: TlsServer&, k: i32, bytes: const u8[:], out: u8[>..]&) -> bool {
 // Seals w[from..] for slot k, in its place, followed by close_notify if
 // last: w ends with the bytes OpenSSL has waiting to send, the handshake's
 // too. False when OpenSSL fails.
-fn tls_seal(t: TlsServer&, k: i32, w: u8[>..]&, from: i64, last: bool) -> bool {
+fn tls_seal<C>(t: TlsServerOf<C>&, k: i32, w: u8[>..]&, from: i64, last: bool) -> bool {
     let c = t.slots[k].conn;
     if from < w.len {
         guard tls::write(c, w[from..]) == w.len - from else { return false; }
@@ -197,7 +235,7 @@ fn tls_seal(t: TlsServer&, k: i32, w: u8[>..]&, from: i64, last: bool) -> bool {
 }
 
 // Queues close_notify for slot k, once, after its handshake.
-fn tls_notify(t: TlsServer&, k: i32) {
+fn tls_notify<C>(t: TlsServerOf<C>&, k: i32) {
     guard t.slots[k].ready && !t.slots[k].notified else { return; }
     t.slots[k].notified = true;
     tls::shutdown(t.slots[k].conn);
@@ -205,7 +243,7 @@ fn tls_notify(t: TlsServer&, k: i32) {
 
 // Frees slot k, after sending, when clean, close_notify, or the alert of a
 // handshake that failed, in one send that may not take it all.
-fn tls_close(t: TlsServer&, k: i32, fd: i32, clean: bool) {
+fn tls_close<C>(t: TlsServerOf<C>&, k: i32, fd: i32, clean: bool) {
     let c = t.slots[k].conn;
     if clean {
         tls_notify(t, k);

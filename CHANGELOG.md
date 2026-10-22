@@ -2,6 +2,17 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
+## Unreleased
+
+Added:
+
+- A TLS connection's context chosen at its ClientHello, as ACME's TLS-ALPN-01 needs:
+  `http::tls_server(ctx, chooser)` gives a worker an `http::TlsServerOf<C>`, and on a
+  context given to `tls::choose_context`, the handshake calls the program's
+  `http::tls_hello(chooser, conn)`, which may move the connection with
+  `tls::use_context`. `http::TlsServer` and `http::tls_server(ctx)` are unchanged,
+  and add a check only where the handshake is advanced (`docs/api.md`, "HTTPS").
+
 ## v0.5.2 (2026-10-22)
 
 Host names in the blocking `connect`, and goose-tls's faster server. Goose `v2026.3`,

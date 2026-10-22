@@ -280,6 +280,10 @@ an `http::TlsServer` from `http.tls`'s `serve_epoll(cfg, fresh, server)` or
 a 16 KB buffer the socket's bytes are read into, and a slot per TLS connection, which
 `EpollConn.tls` or `RingConn.tls` names, -1 on a plain connection. A slot holds the
 `tls::Conn`, whether its handshake is done, and whether close_notify is queued.
+`TlsServer` is `TlsServerOf<OneContext>`; a `TlsServerOf<C>` also holds the
+program's chooser, which `tls_plain` hands to the program's `tls_hello` when the
+handshake pauses at the ClientHello (`tls::HELLO`), before it goes on
+([decisions](decisions.md#the-program-chooses-a-connections-context-at-its-clienthello)).
 
 Which driver answers a TLS connection, `answer` or `h2_answer`, is the ALPN's choice
 ([decisions](decisions.md#alpn-chooses-h2-over-tls)), which the loop asks for

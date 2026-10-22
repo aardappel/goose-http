@@ -831,6 +831,51 @@ offers no ALPN, so those profiles still measure HTTP/1.1.
 Rejected: a context per listener, which would need a new name in goose-http's API for
 one benchmark's ports.
 
+## The program chooses a connection's context at its ClientHello
+
+Decided 2026-10-22, for goose-acme's task 001. Narrows [ALPN chooses h2 over
+TLS](#alpn-chooses-h2-over-tls)'s "a loop has one context for all its TLS listeners":
+a connection still starts from that context, and the program may move it.
+
+ACME's TLS-ALPN-01 (RFC 8737) answers a client that sends the challenged name in SNI
+and offers ALPN `acme-tls/1` with a challenge certificate, and every other client
+with the server's, on the same port; a renewed certificate reaches new connections
+while open ones keep theirs. goose-tls has the parts: `tls::choose_context(ctx)` pauses
+each handshake after the ClientHello with `tls::HELLO`, and `tls::server_name`,
+`tls::offers`, and `tls::use_context` read the hello and move the connection. So
+goose-http adds only the place where the program's code runs at that pause:
+
+- `http::TlsServerOf<C>`, a worker's TLS server that holds a program value, the
+  chooser, made by `http::tls_server(ctx, chooser)`. `http::TlsServer` is
+  `TlsServerOf<OneContext>`, so `http::tls_server(ctx)` and code that names
+  `TlsServer` are unchanged.
+- At `tls::HELLO`, the handshake calls `http::tls_hello(chooser, conn)`, which the
+  program declares in the namespace `http` for its chooser's type, as goose-acme's
+  programs declare `acme::challenge_start`, then goes on. The program calls
+  `tls::choose_context(ctx)` once, before the workers start, since a context must be
+  set to choose before it accepts.
+- The chooser is the worker's, and changes only through `tls_hello`: a challenge or a
+  renewal reaches it as the program arranges, such as mail the chooser takes at the
+  next hello.
+
+A one-context program pays nothing per request: the check for `tls::HELLO` sits where
+the handshake is advanced, which a connection leaves once its handshake is done, and
+`OneContext`'s `tls_hello` is empty. The chooser sits after the buffer, since an empty
+struct takes a byte, and ahead of the other fields it moved them, which changed
+clang's loads of them. On macOS (clang, the TLS benchmark server), what this adds is
+the handshake's check and its second call, and nothing else; gcc's count on Linux,
+with valgrind as task 061 counted, is still to take. `serve(cfg, server)` and
+`serve_epoll(cfg, server)`, the forms without `fresh`, take only a `TlsServer`: with a
+generic server, Goose finds them as generic as `serve(cfg, fresh)`, and a call is
+ambiguous. A program with a chooser passes `fresh`.
+
+Rejected: a chooser passed to `serve` as a function value, which Goose can't store,
+and which each loop would pass down to the handshake; a hello event for the handler,
+a new `Event` kind on the request path; a context per listener, which can't tell an
+ACME client from a browser on port 443; and making `TlsServer` itself generic, which
+would make every program that names it, such as goose-rest's `rest.tls`, write a type
+parameter.
+
 ## Not yet decided
 
 ### Compression in an optional module
