@@ -1,0 +1,9 @@
+goose-http tests	ok	5 min 11 s
+goose-rest tests	failed	2 min 02 s
+goose-http build	ok	0 min 36 s
+goose-rest build	ok	1 min 24 s
+REST check	ok	0 min 19 s
+goose-http run.sh	ok	37 min 35 s
+goose-http files.sh	ok	12 min 02 s
+REST run	stopped	stopped at its checks: goose-rest v0.3.3 was outdated (Plod v0.4.0)
+goose-http instructions	ok	(run by hand after the session stopped)
