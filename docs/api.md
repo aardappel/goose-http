@@ -210,6 +210,8 @@ that answers in its own shape
 - `http::field_at(fields, pos)`: the field line at `pos`, its name and value, and
   where the next starts, for walking fields. `http::same_name(a, b)`: whether two
   field names are the same, ignoring case.
+- `http::file_tag(f)`: the `ETag` that `serve_file` sends for `f`, quoted, for a
+  program that answers its 304 or 416 itself with `not_modified` and `range_of`.
 - Compression's parts, which `respond_compressed` composes: `http::coding_for(req,
   c)`, the coding the response takes; `http::coding_q(req, coding)`, the weight
   `Accept-Encoding` gives a coding, in thousandths; `http::compressible(type)`,

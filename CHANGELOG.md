@@ -4,6 +4,11 @@ What each tag adds. Each release names the Goose compiler it was built and teste
 
 ## Unreleased
 
+Added:
+
+- `http::file_tag(f)`, the `ETag` that `serve_file` sends, which `serve_file` now
+  calls, so a program that answers a 304 or 416 itself can match it.
+
 Fixed:
 
 - On io_uring, an h2 stream reset while it waits on `http::wait_socket`, or answered in

@@ -69,10 +69,14 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
 7. [x] **`upgrade(out, protocol)` writes 501 itself on an h2 stream.** The verdict is
    `out.minor == http::H2_MINOR`, and the switch after a 101 a program writes itself
    is `switched(out)`; `docs/api.md` lists neither. Change: list them. Done.
-8. [ ] **`serve_file(req, out, f, content_type, body)` chooses 304, 416, 206, or 200**
+8. [x] **`serve_file(req, out, f, content_type, body)` chooses 304, 416, 206, or 200**
    from `not_modified` and `range_of`, which are public, but the entity tag it builds
    isn't, so a program that answers a 304 or 416 itself can't match it. Change:
    `file_tag(f)`, the `ETag` that `serve_file` sends. Low: no framework asks for it.
+   Done (2026-10-22): `inline fn file_tag(f) -> u8[>..]`, which `serve_file` calls.
+   Goose inlines it, so the C differs only in a block around the tag's appends; built
+   with Apple clang, `-O2`, `.text` is 244 bytes smaller on the epoll server and 328
+   on `examples/files`, whose handler takes in `serve_file`.
 9. [x] **`client(req, out, trusted)` takes a `Reply`** for its socket alone.
    `forwarded_client(req, p, trusted)` takes the peer, but isn't listed. Change: list
    it. Done.

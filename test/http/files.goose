@@ -59,6 +59,24 @@ fn main() {
             assert(find(out, "Content-Length: 200000\r\n") >= 0);
             print("whole, ", f.size, " bytes: ", more, " more pieces");
         }
+        assert(find(out, str("ETag: ", http::file_tag(f), "\r\n")) >= 0);
     }
+    // file_tag is the tag serve_file sends, so a program's own 304 matches
+    // serve_file's.
+    let f, s = http::open_file(name);
+    assert(s == 200);
+    let tag = http::file_tag(f);
+    assert(tag[0] == '"' && tag[tag.len - 1] == '"');
+    var rb: u8[>..] = [];
+    let req = check::request("GET", str("If-None-Match: ", tag, "\r\n"), rb);
+    assert(http::not_modified(req, tag, f.modified));
+    var out: u8[>..] = [];
+    var keep = true;
+    var st = http::Stream { .. };
+    var body = http::FileBody { .. };
+    let reply = http::Reply { buf: out, common: check::COMMON, keep_alive: keep, minor: 1, head: false, stream: st };
+    http::serve_file(req, reply, f, "a/b", body);
+    assert(find(out, "304 Not Modified") >= 0 && body.fd == -1);
+    print("file_tag: serve_file's ETag, and its 304");
     assert(delete_file(name));
 }

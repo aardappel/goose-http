@@ -114,16 +114,7 @@ fn close_body(b: FileBody&) {
 // false, and then ends the response with end. With none to send, as for
 // HEAD, the response has ended and f is closed.
 fn serve_file(req: const Request&, out: Reply, f: File, content_type: const u8[:], body: FileBody&) {
-    var tag: u8[>..] = [];
-    tag.push('"');
-    hex_size(tag, f.size);
-    tag.push('-');
-    hex_size(tag, max(f.modified, 0));
-    if f.coding.len > 0 {
-        tag.push('-');
-        tag.append(f.coding);
-    }
-    tag.push('"');
+    let tag = file_tag(f);
     body.fd = f.fd;
     body.off = 0;
     body.left = 0;
@@ -153,6 +144,23 @@ fn serve_file(req: const Request&, out: Reply, f: File, content_type: const u8[:
         end(out);
         close_body(body);
     }
+}
+
+// The entity tag serve_file sends for f, quoted: its size and modification
+// time in hex, then the coding of a precompressed copy. A program that
+// answers f's 304 or 416 itself passes it to not_modified and range_of.
+inline fn file_tag(f: File) -> u8[>..] {
+    var tag: u8[>..] = [];
+    tag.push('"');
+    hex_size(tag, f.size);
+    tag.push('-');
+    hex_size(tag, max(f.modified, 0));
+    if f.coding.len > 0 {
+        tag.push('-');
+        tag.append(f.coding);
+    }
+    tag.push('"');
+    return tag;
 }
 
 inline fn file_fields(out: Reply, f: File, tag: const u8[:]) {
