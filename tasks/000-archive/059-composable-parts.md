@@ -1,6 +1,6 @@
 # 059: Composable parts
 
-Status: in-progress (asked for 2026-10-22); item 5 open.
+Status: done (2026-10-22).
 
 Every convenience is a composition of public parts
 ([decision](../docs/decisions.md#every-convenience-is-a-composition-of-public-parts)):
@@ -47,7 +47,7 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
    gathered bodies, and its WebSocket's runs once it has WebSocket, live in two arenas.
    Done (2026-10-22): the pool's parts are public, under a budget that counts bytes
    promised and refuses at admission ([The gather pool](#the-gather-pool)).
-5. [ ] **`otherwise(r, out)` decides among 501, 400, 204, 405, and 404 and writes
+5. [x] **`otherwise(r, out)` decides among 501, 400, 204, 405, and 404 and writes
    them.** goose-rest rebuilt the decision to answer in its own shape (its
    `runtime.goose`, `otherwise` and `no_route`). Change: `unrouted(r) -> i32`, the
    status, with `r.allow` for `Allow`, and `otherwise` its composition with `start`,
@@ -62,6 +62,10 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
    (2026-10-22), so the verdict takes its parts too: `unrouted(method, path,
    routable, allow)`, which `unrouted(r)` calls. The benchmark server's `.text` is
    unchanged and `examples/routes`'s 4 bytes smaller (Apple clang, `-O2`).
+   Done (2026-10-22): with one compiler, Goose v2026.3, Enkidu's count of `/nothing`
+   moved −1.0 at `6df5044e` and +4.0 at `5701a0d8` on both loops. `cbffc2a2` gives
+   `unrouted(r)` its own body, which brings epoll's `/nothing` back to v0.4.3's: 2880.0
+   against 2881.0 under valgrind (x86-64, gcc 15.2).
 6. [x] **`require_type(req, out, want)` and `accept_or_406(req, out, offers)` write
    415 and 406.** Their verdicts, `has_type` and `negotiate`, exist, but
    `docs/api.md` doesn't list them, and goose-rest calls `has_type`. Change: list them.
@@ -338,9 +342,9 @@ change in instructions per request:
 
 io_uring's `/api/me` keeps the +22 it has had since `4324c388`. The saving of about 8
 instructions that `7590b1ff` measured before under valgrind didn't show in this
-run, which the change of compiler may explain. Both are open follow-ups, not blockers.
+run, which the change of compiler may explain. Task 062 follows both up.
 `/nothing` is item 5's 404 path: −2.0 on epoll and +4.7 on io_uring, under the same
-confound.
+confound; item 5 has its count with one compiler.
 
 ## Acceptance criteria
 
@@ -357,4 +361,4 @@ confound.
 - [x] `scripts/test.sh` passes on macOS: with `AUTOBAHN=1`, on an M1 Pro, macOS 26.3,
       2026-10-22, each loop's Autobahn run 296 OK, 2 NON-STRICT, and 3 INFORMATIONAL,
       as task 054 recorded
-- [ ] Items 5 to 11 done or decided by the maintainer
+- [x] Items 5 to 11 done or decided by the maintainer

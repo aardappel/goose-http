@@ -1,6 +1,7 @@
 # 060: Who keeps an exchange's state
 
-Status: todo (asked for 2026-10-22)
+Status: done (2026-10-22). goose-rest v0.3.0 carries its side: `PENDING` is gone, and
+`rest::body` and `rest::body_in_pieces` read `Cx.more`.
 
 goose-rest keeps what an exchange needs past the handler's first call in
 `Exchange.mode`, ten bits of a `u16`, beside goose-http's `Stream` and the loop's
@@ -128,13 +129,13 @@ replay of a gathered body, where the body is whole.
 ## Acceptance criteria
 
 - [x] The audit and the signals, above (2026-10-22)
-- [ ] goose-http: `examples/device/` tells an early `TIMEOUT` by `NO_ROOM`, with
+- [x] goose-http: `examples/device/` tells an early `TIMEOUT` by `NO_ROOM`, with
       `Watch.due` gone and its output unchanged
-- [ ] Decisions 1 to 4 made and recorded in goose-rest's `docs/decisions.md`
-- [ ] goose-rest, once its pin is v0.5.0: `due`'s clock checks replaced by `NO_ROOM`
+- [x] Decisions 1 to 4 made and recorded in goose-rest's `docs/decisions.md`
+- [x] goose-rest, once its pin is v0.5.0: `due`'s clock checks replaced by `NO_ROOM`
       in `pause`, `on_event`, `arrived`, and `serve_one`, with the docs listed above;
       its pause tests pass with an early `TIMEOUT` given as `NO_ROOM`
-- [ ] goose-rest: `after` reads `ev.kind` and `ev.whole`, `PENDING` goes or stays as
+- [x] goose-rest: `after` reads `ev.kind` and `ev.whole`, `PENDING` goes or stays as
       decision 2 says, with a test of `rest::body_in_pieces` after a wait as decision 3
       says
-- [ ] goose-rest: `rest::upgrade` sets `UPGRADED` only on an open stream
+- [x] goose-rest: `rest::upgrade` sets `UPGRADED` only on an open stream
