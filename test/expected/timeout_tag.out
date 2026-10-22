@@ -1,4 +1,10 @@
 epoll, no box: no room 1
 epoll, a timer: waited 0
+epoll, twice: waited 0 0
+epoll, max_waiting taken: no room 1
+epoll, max_waiting taken, long: waited 0
 serve, no box: no room 1
 serve, a timer: waited 0
+serve, twice: waited 0 0
+serve, max_waiting taken: no room 1
+serve, max_waiting taken, long: waited 0
