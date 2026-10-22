@@ -198,6 +198,23 @@ intermediate shell can otherwise expand variables before bash sees them.
   does. For a graceful stop, start the server with `CREATE_NEW_PROCESS_GROUP` and send
   `signal.CTRL_BREAK_EVENT` to its PID; a path for `subprocess` must be absolute
   (`cygpath -m "$PWD/build/server.exe"`).
+- A send to a peer that has closed fails with `WSAECONNABORTED`, which the shim reports
+  as `ECONNABORTED` (103), as libuv does; Linux gives `EPIPE` or `ECONNRESET`.
+  `test/outbound/outbound_blocking.goose`'s "send after the close" check expects
+  those two, so it fails on Windows (2026-10-22).
+- On IOCP, `serve` refuses a TLS listener and a second listener with `ENOSYS`, where
+  the other loops refuse a TLS listener without goose-tls with `EINVAL`, so
+  `test/http/no_tls.goose` fails on Windows (2026-10-22).
+- A program that makes an `http.client` session builds goose-tls, whose CMake step
+  stops at "Could NOT find OpenSSL" without OpenSSL 3, so `test/client/client.goose`
+  doesn't build on Windows (2026-10-22). That test also serves on Unix sockets and
+  `serve_epoll`.
+- h2spec v2.6.0 has a Windows release, `h2spec_windows_amd64.zip` (SHA-256
+  `57b608578bd9c8c3b6b821c2ab64925a6caee16185b356fff611a7a86fe8e697`), but
+  `scripts/test-h2spec.sh` fetches only the Linux and macOS ones, and the benchmark
+  server serves h2c on a second listener, which IOCP doesn't take. A program that
+  serves h2c on its only port (`Config.h2c`) passed all 146 tests on IOCP
+  (2026-10-22).
 
 ### Line endings on Windows
 
@@ -238,6 +255,8 @@ keeps each file's endings needs no escaping.
   `C:\Users\...\tree.tar` from `$TEMP`, as a remote host, fails with "Cannot connect
   to C: resolve failed", and extracts nothing. Pass `--force-local`, or a `/c/...`
   path.
+- Git Bash's mingw curl 8.7.1 has no HTTP/2: `--http2-prior-knowledge` fails with
+  "the installed libcurl version doesn't support this" (2026-10-22).
 
 ### MinGW-w64
 

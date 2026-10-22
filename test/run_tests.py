@@ -240,9 +240,9 @@ def find_tests(names):
     tests = sorted(p for p in HERE.glob("*/*.goose") if p.parent != EXPECTED)
     # test/tls/'s programs import goose-tls, which builds with OpenSSL, not yet
     # set up on Windows (docs/development.md, "OpenSSL"). test/outbound/'s
-    # haven't run on Windows yet: the loop's listens on a Unix socket and
-    # serves on serve_epoll, which Windows lacks, and Windows may refuse a
-    # connect to a full backlog where the blocking one expects a time-out.
+    # don't pass on Windows: the loop's listens on a Unix socket and serves on
+    # serve_epoll, which Windows lacks, and the blocking one's send after the
+    # peer closed fails with ECONNABORTED (docs/known-issues.md, "Windows").
     if WINDOWS:
         tests = [t for t in tests if t.parent.name not in ("tls", "outbound")]
     stems = {}
