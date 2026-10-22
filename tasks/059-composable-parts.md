@@ -58,6 +58,10 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
    and their machine code changes by +48 and −76 bytes (Apple clang, `-O2`); the
    router test passes unchanged. Not landed until `bench/count.sh` on Linux shows
    the 404 path's instructions per request unchanged (tier A's `/nothing`).
+   goose-rest's generated router has no `Router`, and built one for the verdict
+   (2026-10-22), so the verdict takes its parts too: `unrouted(method, path,
+   routable, allow)`, which `unrouted(r)` calls. The benchmark server's `.text` is
+   unchanged and `examples/routes`'s 4 bytes smaller (Apple clang, `-O2`).
 6. [x] **`require_type(req, out, want)` and `accept_or_406(req, out, offers)` write
    415 and 406.** Their verdicts, `has_type` and `negotiate`, exist, but
    `docs/api.md` doesn't list them, and goose-rest calls `has_type`. Change: list them.

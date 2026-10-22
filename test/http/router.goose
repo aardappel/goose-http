@@ -81,4 +81,8 @@ fn main() {
     routes_to("OPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n",
               "HTTP/1.1 204 No Content\r\nServer: goose\r\nDate: Sat, 10 Oct 2026 12:00:00 GMT\r\n\r\n");
     print("501, and OPTIONS *: ", routed);
+    // The verdict without a Router, from its parts.
+    print("unrouted: ", http::unrouted("FOO", "/", true, ""), " ", http::unrouted("GET", "/a/../b", false, ""), " ",
+          http::unrouted("OPTIONS", "*", true, ""), " ", http::unrouted("OPTIONS", "/users/1", true, "GET"), " ",
+          http::unrouted("POST", "/users/1", true, "GET, PUT"), " ", http::unrouted("GET", "/nothing", true, ""));
 }

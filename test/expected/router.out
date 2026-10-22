@@ -2,3 +2,4 @@ routes: 9
 405, OPTIONS, and 404: 17
 escapes and dot-segments: 26
 501, and OPTIONS *: 29
+unrouted: 501 400 204 204 405 404

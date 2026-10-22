@@ -204,7 +204,9 @@ that answers in its own shape
   101's head the program wrote itself is whole.
 - `http::unrouted(r)`: the status `otherwise` answers a request no route took, 501,
   400, 204, 405, or 404; a 204 or 405 carries `r.allow` in `Allow` when it isn't
-  empty.
+  empty. `http::unrouted(method, path, routable, allow)`: the same status for a
+  router of the program's own, from the method, the path, whether `is_routable`
+  holds for it, and the methods of the routes whose path matched.
 - `http::field_at(fields, pos)`: the field line at `pos`, its name and value, and
   where the next starts, for walking fields. `http::same_name(a, b)`: whether two
   field names are the same, ignoring case.
