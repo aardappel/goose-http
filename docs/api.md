@@ -390,6 +390,18 @@ thread_fn worker(cfg: http::Config) {
   head, before its payload arrives.
 - `http::ws_send(out, op, data)` sends a message in one frame, at any event of the
   connection's, such as `WAKE` for one from another thread. Text must be UTF-8.
+- `http::after_drain(out)` requests one `DRAINED` event after an upgraded
+  connection's output queue empties into its socket. Call it after `send` or
+  `ws_send`, and accept the next bounded batch only at `DRAINED`. It returns false
+  without an open upgraded stream or bytes sent since the previous request.
+  Repeated requests coalesce, and `CLOSED` replaces the notification if the
+  connection fails. A pending `later` mailbox wait and its deadline stay armed.
+  Socket acceptance does not mean the peer processed the bytes. This API does not
+  limit arbitrary calls to `ws_send`: the program must bound its batches and
+  producer queues. See `examples/drain.goose` for a mailbox publisher that sends
+  one 8 KiB batch per drain credit. On Linux, build that example and run
+  `python3 scripts/test-drain.py /path/to/drain` to test a stalled reader's memory,
+  resumed frame ordering, and disconnect cleanup on both loops.
 - `http::ws_close(out, st.ws, code, reason)` starts the close: 1000 and no reason by
   default. Messages that arrive after are dropped, and the connection closes when the
   client's Close comes, or after `Config.idle_ms`.
