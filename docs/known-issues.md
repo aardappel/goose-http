@@ -51,6 +51,17 @@ the default to a distribution with no bash. For commands containing shell variab
 put them in a script and run `wsl.exe -d Ubuntu -- bash /mnt/c/.../script.sh`; the
 intermediate shell can otherwise expand variables before bash sees them.
 
+- The name `Ubuntu` isn't always 26.04: a machine can have an older distribution under
+  it and 26.04 as `Ubuntu-26.04`. Check with `cat /etc/os-release` before a test run
+  (2026-10-22).
+- Git in WSL can't use a worktree that Windows git made: its `.git` file names a
+  Windows path, and every git command there fails with "not a git repository". Test
+  Linux from a clone on WSL's own filesystem instead
+  ([development](development.md#wsl2-on-windows)), which also builds faster than
+  `/mnt/c`.
+- A fresh distribution may lack `libssl-dev`, and the TLS tests then fail at CMake's
+  "Could NOT find OpenSSL". Install the Linux section's packages in it.
+
 - Git Bash rewrites POSIX-looking arguments. Set `MSYS_NO_PATHCONV=1` for a WSL call;
   PowerShell doesn't rewrite paths.
 - A non-login script doesn't read the WSL profile. Export the oha path, and `GOOSE` or
