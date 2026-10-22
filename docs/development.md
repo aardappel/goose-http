@@ -373,13 +373,23 @@ where the host's CPU can't run the architecture.
 **OS:** tested on WSL 3.0.3, kernel 6.18.54.1-microsoft-standard-WSL2 (since
 2026-10-13).
 
-On a Windows machine, Linux runs as Ubuntu 26.04 in WSL2, in the same checkout as the
-native build; the [Linux](#linux) versions come from there. Set it up as the Linux
-section describes, in a WSL shell, and run `scripts/test.sh` there for the Linux loops
-and in Git Bash for IOCP. Run `cargo` from a Linux directory, as the Linux section's
-`cd ~` does: from the Windows filesystem it inherits Windows configuration. Calling WSL
-from a Windows shell has traps of its own
-([known issues](known-issues.md#wsl-from-a-windows-shell)).
+On a Windows machine, Linux runs as Ubuntu 26.04 in WSL2; the [Linux](#linux) versions
+come from there. Set it up as the Linux section describes, in a WSL shell. Run
+`scripts/test.sh` for the Linux loops in a clone on WSL's own filesystem, and in Git
+Bash for IOCP in the Windows checkout. The clone takes the Windows checkout as a
+remote, so a branch reaches Linux without a push:
+
+```sh
+git clone /mnt/c/PATH/TO/goose-http ~/goose-http   # once; the checkout is origin
+cd ~/goose-http && git fetch origin BRANCH && git checkout --detach FETCH_HEAD
+```
+
+A checkout under `/mnt/c` works too, but WSL reaches it through a network filesystem:
+`test/run_tests.py` took 67 s there and 48 s in the clone (2026-10-22). Git in WSL
+also can't use a Windows `git worktree`, whose `.git` file names a Windows path. Run
+`cargo` from a Linux directory, as the Linux section's `cd ~` does: from the Windows
+filesystem it inherits Windows configuration. Calling WSL from a Windows shell has
+traps of its own ([known issues](known-issues.md#wsl-from-a-windows-shell)).
 
 #### Docker on macOS
 
