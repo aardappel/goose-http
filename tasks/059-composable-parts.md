@@ -252,5 +252,7 @@ Who gains:
       unchanged byte for byte, and the request path's generated code unchanged
 - [x] Item 3 done, or the reason it waits recorded here
 - [x] Item 4's design, with its open questions
-- [ ] `scripts/test.sh` passes on macOS
+- [x] `scripts/test.sh` passes on macOS: with `AUTOBAHN=1`, on an M1 Pro, macOS 26.3,
+      2026-10-22, each loop's Autobahn run 296 OK, 2 NON-STRICT, and 3 INFORMATIONAL,
+      as task 054 recorded
 - [ ] Items 5 to 11 done or decided by the maintainer
