@@ -43,7 +43,7 @@
 // records. Tier D's answers are written the one way, as each is new.
 //
 // The records, their JSON, and tier D's work on a body are app.goose's, which
-// goose-rest's server imports too; this file is what the benchmark compares:
+// Plod's server imports too; this file is what the benchmark compares:
 // the routes, a request's parameters and headers, the errors, the loader,
 // the workers, and main.
 import std;
@@ -410,7 +410,7 @@ fn heavy_error(out: http::Reply, status: i32) {
 }
 
 // A byte that is neither base64url nor '.', and '.', for find_any, which
-// scans 16 bytes at a time, as goose-rest's server checks the token: a byte
+// scans 16 bytes at a time, as Plod's server checks the token: a byte
 // loop over tier C's 560-byte tokens took over a quarter of a request's cycles.
 let NOT_JWT = not_jwt_set();
 let DOT = byte_set(".");

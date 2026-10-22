@@ -4,10 +4,10 @@
 // It has no routes and no main: rest.goose serves it, from its own routes,
 // loader thread, and workers.
 //
-// goose-rest's benchmark server imports this file too, as
+// Plod's benchmark server imports this file too, as
 // `import http.bench.rest.goose.app;`, and serves it from its own routes.
 // Renaming or changing a declaration here is a breaking change for
-// goose-rest's next pin move.
+// Plod's next pin move.
 //
 // The importer imports http.store too, which the templates use: imported from
 // a package, this file can't name its own package's modules (Goose v2026.2

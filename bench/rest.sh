@@ -30,7 +30,7 @@
 #   4. The mixed run: a TIER=d server, warmed up with tier C at saturation,
 #      then tier C's reads at RATE_C, alone and beside the uploads role.
 #
-# may-minihttp, Tina, and goose-rest's Aegon servers have no tier D (task
+# may-minihttp, Tina, and Plod's Aegon servers have no tier D (task
 # 021, and no_d below), so they
 # skip its checker and steps 2 and 4, and env.txt says why.
 #

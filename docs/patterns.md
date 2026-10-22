@@ -3,8 +3,8 @@
 This guide covers server patterns for large request bodies, long responses, slow work,
 resource limits, crashes, and state that workers share. Each section presents a pattern, links
 to an example, and points to the [API](api.md) for details. It builds on the README's
-[concepts](../README.md#concepts). goose-rest's
-[tutorial](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/README.md) builds
+[concepts](../README.md#concepts). Plod's
+[tutorial](https://github.com/kaitk/plod/blob/main/docs/tutorial/README.md) builds
 an application on these patterns, and each section names the page that does.
 
 One fact explains each of these patterns: a worker is a single thread that runs the
@@ -68,8 +68,8 @@ server's limit, as the first snippet needs for its 4 MB. `http::gather`'s limit 
 In the plain handler, a body over 8 KB isn't an error: `body` is empty, and the rest of
 it is dropped. A route that can get one needs one of the other two.
 
-With goose-rest: [JSON bodies](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/04-json.md)
-and [large bodies](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/10-large-bodies.md).
+With Plod: [JSON bodies](https://github.com/kaitk/plod/blob/main/docs/tutorial/04-json.md)
+and [large bodies](https://github.com/kaitk/plod/blob/main/docs/tutorial/10-large-bodies.md).
 
 ## Long responses
 
@@ -106,8 +106,8 @@ sequenceDiagram
     H->>L: end(out)
 ```
 
-With goose-rest: a reply that a lane sends in pieces,
-[two lanes, or a reply in pieces](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/12-two-lanes.md).
+With Plod: a reply that a lane sends in pieces,
+[two lanes, or a reply in pieces](https://github.com/kaitk/plod/blob/main/docs/tutorial/12-two-lanes.md).
 
 ## Mail between threads
 
@@ -140,10 +140,10 @@ A send says at once whether the message went in, `SENT`, or why not:
 
 A worker waits for mail with `http::later`, which takes a time limit and returns the
 address to reply to. How to shape that thread as a lane, and the work it takes:
-[slow work](#slow-work). With goose-rest, a route asks a lane with
-`rest::ask`, and the lane answers it:
-[work that waits](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/11-waiting.md)
-and [two lanes](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/12-two-lanes.md).
+[slow work](#slow-work). With Plod, a route asks a lane with
+`plod::ask`, and the lane answers it:
+[work that waits](https://github.com/kaitk/plod/blob/main/docs/tutorial/11-waiting.md)
+and [two lanes](https://github.com/kaitk/plod/blob/main/docs/tutorial/12-two-lanes.md).
 
 The design is [Tina](https://github.com/pmbanugo/tina)'s, a thread-per-core framework in
 Odin: boxes bounded when they open, work sent to a thread's address rather than to a
@@ -179,7 +179,7 @@ Short CPU-bound work, including a query on embedded SQLite, stays in the handler
 | I/O-bound, or long and CPU-bound | A lane; the handler waits with `http::later` | `later/`, which counts primes |
 | One request to another server, such as a single query, on `serve_epoll`, or `serve` on io_uring | In the handler, on a socket the worker owns; it waits with `http::wait_socket` | `test/outbound/outbound_loop.goose` ([outbound connections](api.md#on-the-workers-loop)) |
 | Either, going on with results as they come | The same, with the response sent in pieces | `device/`'s `/api/events` |
-| Minutes of either | A background task: answer `202 Accepted` with its ID at once, and let the client ask for the result | goose-rest's [background tasks](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/13-limits.md#background-tasks) |
+| Minutes of either | A background task: answer `202 Accepted` with its ID at once, and let the client ask for the result | Plod's [background tasks](https://github.com/kaitk/plod/blob/main/docs/tutorial/13-limits.md#background-tasks) |
 
 The split is the half-sync/half-async pattern: workers are the asynchronous half, the
 lanes are the synchronous half and run plain blocking code, and mail is the queue
@@ -243,8 +243,8 @@ fn main() {
 Replies to jobs that finish after the workers have stopped return `STALE`.
 
 Waiting is off until `Config.mail_slots` and `Config.max_waiting` are set. The calls,
-and every limit: [API, answers that wait](api.md#answers-that-wait). With goose-rest:
-[work that waits](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/11-waiting.md).
+and every limit: [API, answers that wait](api.md#answers-that-wait). With Plod:
+[work that waits](https://github.com/kaitk/plod/blob/main/docs/tutorial/11-waiting.md).
 
 ## Limits
 
@@ -268,8 +268,8 @@ closes one that stops reading. A wait is the handler's: it gives each `later` a 
 limit, answers 503 when a box is `FULL`, and has its thread check `http::mail_live`
 before work nobody waits for ([slow work](#slow-work)).
 
-For goose-rest's answers at each limit and a background task the client polls, see
-[limits](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/13-limits.md).
+For Plod's answers at each limit and a background task the client polls, see
+[limits](https://github.com/kaitk/plod/blob/main/docs/tutorial/13-limits.md).
 
 ## A crash ends the process
 
@@ -316,4 +316,4 @@ is then held about ten times
 - **Data that changes**, such as counters or sessions: give it one owner thread, and
   have workers ask it by [mail](#mail-between-threads).
 
-With goose-rest: [state](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/08-state.md).
+With Plod: [state](https://github.com/kaitk/plod/blob/main/docs/tutorial/08-state.md).

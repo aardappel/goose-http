@@ -144,7 +144,7 @@ to 5%.
 \* Each record's JSON is prebuilt at startup, with the per-request values spliced in.  
 † The server fell behind the fixed rate, so the reads queued.  
 § A framework, not a direct competitor: its peer is
-[goose-rest](https://github.com/kaitk/goose-rest), the REST framework built on this
+[Plod](https://github.com/kaitk/plod), the REST framework built on this
 package.
 
 Peak RSS at saturation, in MB, the highest peak over each cell's three runs.

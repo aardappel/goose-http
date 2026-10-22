@@ -4,7 +4,7 @@ Small servers, each showing part of the package. The concepts come first in the
 [README](../README.md#concepts), [patterns](../docs/patterns.md) say which approach
 fits large bodies, long responses, slow work, and limits, and the [API](../docs/api.md)
 covers each function with the example that shows it. Each example shows one mechanism;
-[goose-rest's tutorial](https://github.com/kaitk/goose-rest/blob/main/docs/tutorial/README.md)
+[Plod's tutorial](https://github.com/kaitk/plod/blob/main/docs/tutorial/README.md)
 builds an application from them, step by step, with typed routes and middleware on top
 of this package.
 

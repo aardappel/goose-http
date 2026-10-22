@@ -12,7 +12,7 @@ changes between tags.
 [Development](docs/development.md) · [Changelog](CHANGELOG.md)
 
 For a full framework with typed routes, extractors, middleware, and optional route
-generation from OpenAPI, see [goose-rest](https://github.com/kaitk/goose-rest).
+generation from OpenAPI, see [Plod](https://github.com/kaitk/plod).
 
 ## Status
 
@@ -55,7 +55,7 @@ The latest tag, `v0.5.4`, provides all of this on every platform above:
   Linux and macOS, Unix sockets.
 
 The package does not include framework features such as CORS, sessions, and
-middleware (see [goose-rest](https://github.com/kaitk/goose-rest)).
+middleware (see [Plod](https://github.com/kaitk/plod)).
 
 ## Quick start
 
@@ -194,7 +194,7 @@ reads p99 on an earlier build.
 | [Uploads](docs/benchmarks.md#uploads): CSVs and multipart files, up to 8 MB | **1,162 req/s** | 1,016 | 1,151 |
 | Reads p99 beside uploads | **1.8-2.6 ms** | 2.4-4.6 ms | 6.7-42 ms |
 
-\* A framework; its counterpart is [goose-rest](https://github.com/kaitk/goose-rest).
+\* A framework; its counterpart is [Plod](https://github.com/kaitk/plod).
 
 Goose uses io_uring, except for uploads and reads p99, which use epoll. Results for
 every server and both Goose event loops: [docs/benchmarks.md](docs/benchmarks.md#rest-apis).
