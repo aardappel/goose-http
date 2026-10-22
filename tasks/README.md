@@ -54,7 +54,7 @@ goose-rest's first benchmark run on the desktop. The HTTP changes it needs are o
 |---|---|
 | 006: platform ports | Platform subtasks are done; the optional conditional-compilation goal remains unresolved. |
 | 012: macOS benchmarks | Complete the Docker matrix; retain the platform and client limits. |
-| 014: HTTP/2 and TLS | h2c serves from the epoll and io_uring loops (014.01), with a question open; HTTP/1.1 over TLS serves from the epoll and io_uring loops, passes HttpArena's validation, and is measured on json-tls and 8gbit (014.02, 2026-10-20). kTLS serves on epoll; io_uring's kTLS, HttpArena with kTLS, and h2 over TLS remain. |
+| 014: HTTP/2 and TLS | h2c serves from the epoll and io_uring loops (014.01), with a question open; HTTP/1.1 over TLS serves from the epoll and io_uring loops, passes HttpArena's validation, and is measured on json-tls and 8gbit (014.02, 2026-10-20). kTLS was retired (2026-10-22, goose-tls's task 007); h2 over TLS remains. |
 | 016: worker memory | Finish source accounting, reductions, and the Goose-side question. |
 | 017: IOCP speed | Read the kernel trace and evaluate candidates against the recorded baseline. |
 | 022: compression | Record approval of the implemented boundary and finish outstanding platform validation. |

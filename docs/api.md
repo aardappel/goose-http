@@ -885,12 +885,6 @@ closes after its response sends close_notify, and so does an idle one that times
 or is closed by a stop. Files are read in pieces rather than sent by `sendfile` or
 splice. h2 over TLS is still to come.
 
-On Linux, `serve_epoll` hands a connection's record layer to the kernel (kTLS) after
-its handshake when the context asks for it: call `tls::use_kernel(ctx)` before the
-workers start. It returns false where the kernel has no kTLS (the `tls` module:
-`sudo modprobe tls`), and the connections stay in user space. Handlers don't change.
-The io_uring loop keeps its connections in user space for now.
-
 The benchmark server's TLS build (`scripts/build.sh` with `TLS=1`) serves TLS on its
 port + 1, as HttpArena's 8081 is beside 8080, with either loop, when `TLS_CERT` and
 `TLS_KEY` name a PEM certificate chain and its key. `TLS_PORT` names another port, and

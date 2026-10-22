@@ -68,7 +68,6 @@ fn tls_recv(t: NoTls&, k: i32, fd: i32, buf: u8[:]) -> i64, bool { return -1, fa
 fn tls_take(t: NoTls&, k: i32, bytes: const u8[:], out: u8[>..]&) -> bool { false }
 fn tls_seal(t: NoTls&, k: i32, w: u8[>..]&, from: i64, last: bool) -> bool { false }
 fn tls_close(t: NoTls&, k: i32, fd: i32, clean: bool) {}
-fn tls_bye(t: NoTls&, k: i32, fd: i32) {}
 
 // serve_epoll(cfg, fresh), with tls, a NoTls or http.tls's TlsServer, the
 // TLS of the listeners that serve it. A TLS connection's bytes pass through
@@ -405,7 +404,6 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
                 }
             }
             if c.state == CLOSING {
-                if c.tls >= 0 { tls_bye(tls, c.tls, c.fd); }
                 net_shutdown(c.fd, SHUT_WR);
                 c.state = DRAINING;
                 c.deadline = now + cfg.linger_ms;
@@ -493,7 +491,6 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
                         spill.free_slice(c.held);
                         c.held = c.held[..0];
                     }
-                    if c.tls >= 0 { tls_bye(tls, c.tls, c.fd); }
                     net_shutdown(c.fd, SHUT_WR);
                     c.state = DRAINING;
                     c.deadline = now + cfg.linger_ms;

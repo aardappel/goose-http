@@ -27,25 +27,13 @@ import sys;
 import epoll;
 
 // One connection's TLS: ready once its handshake is done, and notified once
-// close_notify is queued. kernel is -1 until tls::to_kernel settles where
-// the record layer runs, then the directions the kernel holds (KERNEL_RX,
-// KERNEL_TX), 0 for none. A free slot holds the next free one.
+// close_notify is queued. A free slot holds the next free one.
 struct TlsSlot {
     conn: tls::Conn,
     ready: bool,
     notified: bool,
-    kernel: i64 = -1,
     next: i32 = -1,
 }
-
-// What recv returns on a kTLS socket for a record that isn't data.
-let EIO = 5;
-
-// kTLS's records that aren't data, through shim/net.c: a receive after EIO,
-// with its type for net_record_type, and a send of one record of a type.
-extern fn net_recv_record(fd: i32, buf: u8[:]) -> i64;
-extern fn net_record_type() -> i64;
-extern fn net_send_record(fd: i32, kind: i64, data: const u8[:]) -> i64;
 
 // A worker's TLS: the context its connections are accepted from, the
 // buffer the socket's bytes are read into before they're fed to OpenSSL,
@@ -142,30 +130,9 @@ fn tls_plain(s: TlsSlot&, buf: u8[:]) -> i64, bool {
 // the connection is done: the client closed it, sent close_notify, or failed
 // the handshake. What came before a close_notify is returned first, and the
 // next call returns the close.
-//
-// The epoll loop calls it only once everything sealed is on the socket, the
-// condition for moving the record layer to the kernel, so after the
-// handshake it tries that here, where the context asked for it
-// (tls::use_kernel).
 fn tls_recv(t: TlsServer&, k: i32, fd: i32, buf: u8[:]) -> i64, bool {
     let s .= t.slots[k];
     guard buf.len > 0 else { return -1, false; }
-    if s.ready && s.kernel < 0 {
-        let r = tls::to_kernel(s.conn, fd);
-        if r >= 0 { s.kernel = r; }
-        else if r == tls::WANT_INPUT {
-            // The bytes fed end inside a record: read exactly the rest of it.
-            let want = min(tls::kernel_wants(s.conn), t.wire.len);
-            var n = net_recv(fd, t.wire[..want]);
-            while n == -EINTR { n = net_recv(fd, t.wire[..want]); }
-            if n == -EAGAIN { return -EAGAIN, true; }
-            guard n > 0 && tls::feed(s.conn, t.wire[..n]) == n else { return -1, false; }
-            // Short: the record's end hasn't arrived, and the socket is empty.
-            if n < want { return -EAGAIN, true; }
-        }
-        else if r != tls::PENDING { s.kernel = 0; }
-    }
-    if s.kernel > 0 && (s.kernel & tls::KERNEL_RX) != 0 { return kernel_recv(t, s, fd, buf); }
     var empty = false;
     loop {
         let got, done = tls_plain(s, buf);
@@ -179,32 +146,6 @@ fn tls_recv(t: TlsServer&, k: i32, fd: i32, buf: u8[:]) -> i64, bool {
         guard n > 0 else { return -1, false; }
         guard tls::feed(s.conn, t.wire[..n]) == n else { return -1, false; }
         empty = n < t.wire.len;
-    }
-}
-
-// tls_recv once the kernel holds receiving: plaintext from the socket itself.
-// A record that isn't data fails recv with EIO and goes to
-// tls::kernel_record: a KeyUpdate, answered at once when the kernel holds
-// sending too, since nothing sealed is waiting; close_notify, or an alert.
-fn kernel_recv(t: TlsServer&, s: TlsSlot&, fd: i32, buf: u8[:]) -> i64, bool {
-    loop {
-        let n = net_recv(fd, buf);
-        if n == -EINTR { continue; }
-        if n == -EAGAIN { return -EAGAIN, true; }
-        if n == -EIO {
-            let m = net_recv_record(fd, t.wire);
-            guard m >= 0 else { return -1, false; }
-            let r = tls::kernel_record(s.conn, fd, net_record_type(), t.wire[..m]);
-            if r == tls::UPDATE_TX {
-                guard net_send_record(fd, tls::RECORD_HANDSHAKE, tls::KEY_UPDATE) == tls::KEY_UPDATE.len &&
-                      tls::kernel_update_tx(s.conn, fd) == 0 else { return -1, false; }
-            } else {
-                guard r == 0 else { return -1, false; }   // close_notify, or an alert
-            }
-            continue;
-        }
-        guard n > 0 else { return -1, false; }
-        return n, n < buf.len;
     }
 }
 
@@ -227,10 +168,8 @@ fn tls_take(t: TlsServer&, k: i32, bytes: const u8[:], out: u8[>..]&) -> bool {
 
 // Seals w[from..] for slot k, in its place, followed by close_notify if
 // last: w ends with the bytes OpenSSL has waiting to send, the handshake's
-// too. False when OpenSSL fails. Once the kernel holds sending, w stays
-// plaintext, and tls_bye sends close_notify.
+// too. False when OpenSSL fails.
 fn tls_seal(t: TlsServer&, k: i32, w: u8[>..]&, from: i64, last: bool) -> bool {
-    if t.slots[k].kernel > 0 && (t.slots[k].kernel & tls::KERNEL_TX) != 0 { return true; }
     let c = t.slots[k].conn;
     if from < w.len {
         guard tls::write(c, w[from..]) == w.len - from else { return false; }
@@ -257,23 +196,11 @@ fn tls_notify(t: TlsServer&, k: i32) {
     tls::shutdown(t.slots[k].conn);
 }
 
-// Sends close_notify through the kernel, once, for slot k when the kernel
-// holds its sending: the epoll loop calls it before it shuts the socket's
-// sending down. In user space tls_seal sealed it already.
-fn tls_bye(t: TlsServer&, k: i32, fd: i32) {
-    let s .= t.slots[k];
-    guard s.kernel > 0 && (s.kernel & tls::KERNEL_TX) != 0 && !s.notified else { return; }
-    s.notified = true;
-    net_send_record(fd, tls::RECORD_ALERT, tls::CLOSE_NOTIFY);
-}
-
 // Frees slot k, after sending, when clean, close_notify, or the alert of a
 // handshake that failed, in one send that may not take it all.
 fn tls_close(t: TlsServer&, k: i32, fd: i32, clean: bool) {
     let c = t.slots[k].conn;
-    if clean && t.slots[k].kernel > 0 && (t.slots[k].kernel & tls::KERNEL_TX) != 0 {
-        tls_bye(t, k, fd);
-    } else if clean {
+    if clean {
         tls_notify(t, k);
         var bye: u8[256] = [0; 256];
         let n = tls::drain(c, bye);

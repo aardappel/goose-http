@@ -385,19 +385,6 @@ int64_t net_send(int32_t fd, net_bytes data) {
     return r < 0 ? -net_err(errno) : r;
 }
 
-/* kTLS is Linux's: http.tls never moves a connection to the kernel here. */
-int64_t net_record_type(void) { return 23; }
-
-int64_t net_recv_record(int32_t fd, net_bytes buf) {
-    (void)fd, (void)buf;
-    return -net_err(ENOSYS);
-}
-
-int64_t net_send_record(int32_t fd, int64_t kind, net_bytes data) {
-    (void)fd, (void)kind, (void)data;
-    return -net_err(ENOSYS);
-}
-
 int32_t net_shutdown(int32_t fd, int32_t how) {
     return shutdown(fd, how) < 0 ? -net_err(errno) : 0;
 }
