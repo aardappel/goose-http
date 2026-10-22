@@ -323,6 +323,25 @@ and gcc 15.2.0, `e73b9870` before and `b5f82a2d` after:
 - Peak RSS is unchanged: 69-71 MB alone, 125-129 MB beside forms.
 - perf profiles of uploads alone match, with no allocation function above 0.8%.
 
+## v0.4.3 to v0.5.0 on Linux
+
+Measured on Enkidu (AMD Ryzen 7 PRO 6850U, WSL2, kernel 6.18.54, gcc 15.2), with
+`bench/count.sh` at N=1,000,000 on goose-http's REST tier server: `0a016bb0` (v0.4.3),
+built with Goose v2026.2, against `e128cb39` (v0.5.0), built with v2026.3. The compiler
+differs as well as the package, so neither change's share can be told apart. The
+change in instructions per request:
+
+| Loop | `/plaintext` | `/api/items/1` | `/api/me` | `/nothing` |
+|---|---:|---:|---:|---:|
+| epoll | 0 | −6.0 | −1.0 | −2.0 |
+| io_uring | −5.7 | −6.1 | +22.0 | +4.7 |
+
+io_uring's `/api/me` keeps the +22 it has had since `4324c388`. The saving of about 8
+instructions that `7590b1ff` measured before under valgrind didn't show in this
+run, which the change of compiler may explain. Both are open follow-ups, not blockers.
+`/nothing` is item 5's 404 path: −2.0 on epoll and +4.7 on io_uring, under the same
+confound.
+
 ## Acceptance criteria
 
 - [x] The decision recorded in `docs/decisions.md`
