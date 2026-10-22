@@ -120,7 +120,15 @@ fn param(r: const Router&, name: const u8[:]) -> const u8[:] {
 // OPTIONS *, for the server as a whole (§9.3.7), and for OPTIONS of a path
 // some route matched; 405 for another method there; and 404 for a path no
 // route matched. A 204 and a 405 carry r.allow in Allow when it isn't empty.
-fn unrouted(r: const Router&) -> i32 { unrouted(r.method, r.path, !r.bad, r.allow) }
+// Calling the form below instead would load the fields before the method's
+// compare, and keep them across it: 4 instructions more on each 404.
+fn unrouted(r: const Router&) -> i32 {
+    if !known_method(r.method) { return 501; }
+    if r.bad { return 400; }
+    if r.method == "OPTIONS" && r.path == "*" { return 204; }
+    if r.allow.len == 0 { return 404; }
+    return if r.method == "OPTIONS" { 204 } else { 405 };
+}
 
 // The same status for a request routed without a Router: its method, its
 // path, whether is_routable(path) holds, and allow, the methods of the
