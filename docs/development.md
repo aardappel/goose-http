@@ -416,6 +416,15 @@ docker run --rm --platform linux/amd64 --network container:h2c-srv -v /tmp/h2spe
     ubuntu:26.04 /h/h2spec -h 127.0.0.1 -p 29082 -P /plaintext -o 2
 ```
 
+To compare two builds' instructions per request on a Mac, where `bench/count.sh`'s
+perf isn't, cross-build each server for arm64 Linux as `scripts/test-aarch64.sh` builds
+the examples, and run it with `WORKERS=1` under `valgrind --tool=cachegrind
+--cache-sim=no` in an arm64 `ubuntu:26.04` container with `valgrind` and
+`nghttp2-client`, stopping it with SIGTERM after `h2load --h1 -n N`. The difference of
+`I refs` at two values of N, divided by their difference, is a request's user
+instructions, the same in every run (2026-10-22). macOS's `/usr/bin/time -l` counts
+the kernel's instructions too, which vary by about 50 a request between runs.
+
 #### ARM under Docker
 
 **OS:** tested in `ubuntu:26.04` containers for arm64 (2026-10-14).
