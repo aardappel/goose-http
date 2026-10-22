@@ -905,6 +905,19 @@ parameter.
 
 ## Not yet decided
 
+### Upgraded streams can request output drain notifications
+
+Implemented 2026-10-22 for review. `after_drain` and `DRAINED` let a publisher
+keep one bounded batch in flight per upgraded connection. The pending bit is a
+`Framing` variant, so ordinary HTTP connections gain no fields or queue storage.
+Both loops deliver the event after their queued output reaches the socket;
+connection failure cancels it through the existing `CLOSED` event.
+
+A general `try_send` admission API would need output accounting exposed to every
+handler, and retry storage in the application. A drain credit lets the publisher
+retain the next message instead. This is opt-in producer flow control, not a
+hard limit on handlers that continue sending without waiting for a credit.
+
 ### Compression in an optional module
 
 Implemented, with no recorded approval; task 022.

@@ -501,6 +501,21 @@ enum BodyReader {
     Raw,
 }
 
+fn raw(s: const Stream&) -> bool {
+    return s.framing == Framing.Raw || s.framing == Framing.RawDrain;
+}
+
+// Requests one DRAINED after the bytes sent on this upgraded connection have
+// left the loop's output queue. Call after send/ws_send and wait for DRAINED
+// before accepting another bounded batch. This is socket acceptance, not an
+// acknowledgement from the peer. Repeated requests coalesce; closing cancels it.
+fn after_drain(out: Reply) -> bool {
+    guard out.stream.open && raw(out.stream) && out.stream.moved else { return false; }
+    out.stream.framing = Framing.RawDrain;
+    out.stream.moved = false;
+    return true;
+}
+
 // Reads the next bytes of r's body from the start of buf, up to and including
 // one run of data, buf[d0..d1]. Returns d0, d1, and 200, with buf[..d1] used
 // up; INCOMPLETE, with nothing used, until buf holds a whole size line or
@@ -769,6 +784,7 @@ enum Framing {
     Chunked,
     Close,
     Raw,
+    RawDrain,
 }
 
 struct Stream {
@@ -902,7 +918,7 @@ fn begin(out: Reply, status: i32, length: i64) {
             format(out.buf, length);
             out.buf.append("\r\n");
         },
-        Close, Raw => {},
+        Close, Raw, RawDrain => {},
     }
 }
 
@@ -917,7 +933,7 @@ fn send(out: Reply, data: const u8[:]) {
     }
     guard data.len > 0 else { return; }
     s.moved = true;
-    if s.framing == Framing.Raw {
+    if raw(s) {
         out.buf.append(data);
         return;
     }
@@ -935,7 +951,7 @@ fn send(out: Reply, data: const u8[:]) {
             s.framing = Framing.Length { left: l.left - k };
             if k < data.len { out.keep_alive = false; }
         },
-        Close, Raw => { out.buf.append(data); },
+        Close, Raw, RawDrain => { out.buf.append(data); },
     }
 }
 
@@ -946,7 +962,7 @@ fn send(out: Reply, data: const u8[:]) {
 fn end(out: Reply, trailers: const u8[:] = "") {
     let s .= out.stream;
     guard s.open else { return; }
-    if s.framing == Framing.Raw {
+    if raw(s) {
         s.open = false;
         out.keep_alive = false;
         return;
@@ -966,7 +982,7 @@ fn end(out: Reply, trailers: const u8[:] = "") {
             out.buf.append("\r\n");
         },
         Length l => { if l.left > 0 { out.keep_alive = false; } },
-        Close, Raw => {},
+        Close, Raw, RawDrain => {},
     }
 }
 

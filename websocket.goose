@@ -354,7 +354,7 @@ fn ws_release(ws: WebSocket&) {
 
 // One unmasked frame, whole, as a server sends it (§5.2).
 fn ws_frame(out: Reply, op: u8, data: const u8[:]) {
-    guard out.stream.open && out.stream.framing == Framing.Raw else { return; }
+    guard out.stream.open && raw(out.stream) else { return; }
     var head: u8[..10] = [];
     head.push(0x80 | op);
     let n = data.len;

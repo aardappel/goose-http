@@ -434,7 +434,7 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
         // exchange's next one with SOCKET_READY. Once, here: a call in each
         // of delivered's and timed_out's paths cost the request path 2 user
         // instructions (bench/count.sh), though none of them runs there.
-        if ev.kind != NO_EVENT {
+        if ev.kind != NO_EVENT && ev.kind != DRAINED {
             ring_disarm(r, if wake_at >= 0 { h2streams[wake_at].x.stream.later.key } else { c.x.stream.later.key }, ~0);
         }
         progress = false;
@@ -570,6 +570,11 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
         c.queued -= res as i64;
         progress = true;
         drain(c);
+        if c.queued == 0 && c.state == OPEN && c.x.stream.open && c.x.stream.framing == Framing.RawDrain {
+            c.x.stream.framing = Framing.Raw;
+            let ev = Event { kind: DRAINED, req: nothing, data: "", whole: false, trailers: "" };
+            resume(c, ev);
+        }
         if c.stalled && !blocked(c) {
             c.stalled = false;
             let src = c.held;

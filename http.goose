@@ -253,6 +253,9 @@ let WAKE: u8 = 6;
 // Config.max_waiting exchanges waiting already, which its tag NO_ROOM says.
 // As WAKE otherwise.
 let TIMEOUT: u8 = 7;
+// after_drain's output reached the socket. The exchange's mailbox wait, if
+// any, remains armed. CLOSED replaces this event if the connection fails.
+let DRAINED: u8 = 8;
 // TIMEOUT's tag when the exchange found no room to wait, and got it at once.
 let NO_ROOM: i32 = 1;
 // No event, for answer's wake.
@@ -715,7 +718,7 @@ fn answer<S, H, ROOM, C>(c: C&, rbuf: u8[:], rlen: i64, wbuf: u8[>..]&, common: 
             continue;
         }
         // The exchange goes on past this call, in c's slot.
-        x.body = if x.stream.framing == Framing.Raw { BodyReader.Raw }
+        x.body = if raw(x.stream) { BodyReader.Raw }
                  else if whole { BodyReader.None }
                  else if req.chunked { BodyReader.ChunkSize }
                  else { BodyReader.Length { left: req.body } };

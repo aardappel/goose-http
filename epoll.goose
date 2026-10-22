@@ -388,6 +388,11 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
             wbuf.clear();
             woff = 0;
             sealed = 0;
+            if c.state == OPEN && c.x.stream.open && c.x.stream.framing == Framing.RawDrain {
+                c.x.stream.framing = Framing.Raw;
+                ev = Event { kind: DRAINED, req: nothing, data: "", whole: false, trailers: "" };
+                continue;
+            }
             while c.x.stream.file >= 0 {
                 let s .= c.x.stream;
                 let w = net_sendfile(c.fd, s.file, s.file_off, s.file_left);
