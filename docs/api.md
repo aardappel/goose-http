@@ -273,7 +273,7 @@ thread_fn worker(cfg: http::Config) {
   101, 426, 400, or 501; for 101, the request's `Sec-WebSocket-Key`; and otherwise the
   fields the refusal must carry, whole lines ending in `\r\n`, which a 426 needs.
   `http::ws_switch(out, key, protocol)` then writes the 101 and switches the
-  connection:
+  connection, here in a function the handler calls:
 
   ```rust
   let status, key, fields = http::ws_check(req, out.minor);
