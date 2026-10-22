@@ -173,14 +173,15 @@ static int32_t net_open_listener(struct sockaddr_storage *ss, int len, int32_t b
     BOOL one = TRUE;
     DWORD v6only = (flags & NET_V6ONLY) != 0;
     u_long nb = (flags & NET_NONBLOCK) != 0;
-    /* A backlog above 200 needs SOMAXCONN_HINT; a plain one is cut to 200. */
+    /* A backlog above 200 needs SOMAXCONN_HINT; a plain one is cut to 200.
+       The hint raises anything below 200 to 200, so a smaller one stays plain. */
     if (setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&one, sizeof one) ||
         setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof one) ||
         (ss->ss_family == AF_INET6 &&
          setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&v6only, sizeof v6only)) ||
         ioctlsocket(s, FIONBIO, &nb) ||
         bind(s, (struct sockaddr *)ss, len) ||
-        listen(s, SOMAXCONN_HINT(backlog))) {
+        listen(s, backlog > 200 ? SOMAXCONN_HINT(backlog) : backlog)) {
         int err = WSAGetLastError();
         closesocket(s);
         return -net_win_err(err);
