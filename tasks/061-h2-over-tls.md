@@ -2,7 +2,7 @@
 
 Status: in-progress (asked for 2026-10-22). h2 over TLS serves from both loops, on
 `main`, over goose-tls `v0.0.4`'s TLS 1.3 server in Goose, and the benchmark server
-serves static-h2's `/static/`; HttpArena's validation and its baseline-h2 and
+serves static-h2's `/static/`. HttpArena's validation passes; its baseline-h2 and
 static-h2 runs remain.
 
 Task 014's phase 5: one TLS listener serves h2 or HTTP/1.1 on the same port, as the
@@ -229,9 +229,9 @@ they weigh the swap of server along with this task's change:
 
 The benchmark server's idle `VmRSS` with TLS and 4 workers, median of three, fell from
 10,696 to 10,224 kB on epoll and from 12,744 to 12,040 kB on io_uring. HttpArena's
-validation at `3717e256` passed static-h2: the certificate, TLS 1.3, ALPN h2, content
-types, size, and 404. The report of that run lost the epoll plaintext rows, h2 on
-io_uring, and json-tls's and baseline-h2's validation.
+validation at `3717e256` passed json-tls, baseline-h2, and static-h2 (for static-h2:
+the certificate, TLS 1.3, ALPN h2, content types, size, and 404). The report of that
+run lost the epoll plaintext rows and h2 on io_uring.
 
 ## Acceptance criteria
 
@@ -247,7 +247,7 @@ io_uring, and json-tls's and baseline-h2's validation.
 - [x] Plaintext user instructions per request unchanged, and HTTP/1.1 over TLS's
       within 0.25% (valgrind, numbers above); on bare-metal Linux with
       `bench/count.sh`, still to run
-- [ ] HttpArena's validation passes with baseline-h2 and static-h2, and both are
-      measured
+- [ ] HttpArena's validation passes with baseline-h2 and static-h2 (passed on Tiamat,
+      2026-10-22), and both are measured
 - [x] `docs/decisions.md`, `docs/api.md`, `docs/architecture.md`, `README.md`, and
       `CHANGELOG.md` describe h2 over TLS
