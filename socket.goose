@@ -10,11 +10,12 @@
 //     let n = http::recv(s, buf, 5000);    // 0: the server closed
 //     http::hangup(s);
 //
-// - In a handler on serve_epoll's loop, the worker that asked owns the
-//   socket, and the calls never block: connect_start starts the connect, wait_socket
-//   makes the exchange wait until the socket is ready, as later does, and
-//   recv and send without a limit take and give what the socket has room
-//   for now. The handler gets WAKE with tag SOCKET_READY, or TIMEOUT.
+// - In a handler on serve_epoll's loop, or serve's on io_uring, the worker
+//   that asked owns the socket, and the calls never block: connect_start
+//   starts the connect, wait_socket makes the exchange wait until the
+//   socket is ready, as later does, and recv and send without a limit take
+//   and give what the socket has room for now. The handler gets WAKE with
+//   tag SOCKET_READY, or TIMEOUT.
 //
 // A host is localhost, an IPv4 or IPv6 address, or unix:PATH for a Unix
 // socket on Linux and macOS; other names are still to come, since resolving
@@ -100,8 +101,10 @@ fn hangup(s: Socket&) {
 // TIMEOUT. It is later (http.goose) with the socket as another way to end the
 // wait, so a message to the exchange's address ends it too, and its
 // limits, Config.mail_slots and Config.max_waiting, apply. On serve_epoll's
-// loop on Linux and macOS; on serve's, it fails with ENOSYS, and the
-// exchange doesn't wait.
+// loop on Linux and macOS, and serve's on io_uring; on serve's emulated ring
+// and on Windows, it fails with ENOSYS, and the exchange doesn't wait.
+// Once the wait ends, s stays armed on epoll, and its event may still come
+// as a WAKE with SOCKET_READY in a later wait; io_uring cancels it.
 fn wait_socket(out: Reply, s: Socket, events: u32, ms: i64) -> Error {
     guard s.fd >= 0 else { return Error { call: "wait_socket", code: EINVAL }; }
     let key = out.stream.later.key;

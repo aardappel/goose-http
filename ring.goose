@@ -63,6 +63,18 @@ extern "ur_give" fn ring_give(r: i64, buf: i32);
 // wait with a completion of tag, res 0, and no buffer. Returns it, or -code.
 // The box that owns it is closed after the ring is destroyed.
 extern "ur_waker" fn ring_waker(r: i64, tag: u64) -> i64;
+// Makes net_arm (wait_socket) on this thread arm sockets on ring r, until
+// it's destroyed: a socket's readiness completes with tag, and buf the
+// index ring_socket turns into net_arm's key. Only io_uring's ring takes
+// it: on the others net_arm stays ENOSYS, and these three do nothing.
+extern "ur_bind" fn ring_bind(r: i64, tag: u64);
+// The key of the socket whose completion had buf k, or 0 for none: it was
+// disarmed after its completion was queued.
+extern "ur_socket" fn ring_socket(r: i64, k: i32) -> u64;
+// Cancels the readiness of each socket armed for a key whose bits under
+// mask are key's. A completion already queued for one comes as ring_socket's
+// 0.
+extern "ur_disarm" fn ring_disarm(r: i64, key: u64, mask: u64);
 // Tears the ring down, with whatever is still queued on it. Windows keeps a
 // completion port's memory: it completes the cancels of closed sockets'
 // requests later (shim/iocp.c).

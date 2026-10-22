@@ -450,6 +450,12 @@ int64_t RP(waker)(int64_t h, uint64_t tag) {
 #ifdef RING_EPOLL_ONLY
 /* There's no io_uring to probe for: the ring is always this emulation. */
 int32_t ur_probe(void) { return -RP_ENOSYS; }
+
+/* net_arm arms no socket on the emulation: shim/kqueue.c's stays ENOSYS on
+   it. */
+void ur_bind(int64_t h, uint64_t tag) {}
+uint64_t ur_socket(int64_t h, int32_t k) { return 0; }
+void ur_disarm(int64_t h, uint64_t key, uint64_t mask) {}
 #endif
 
 void RP(take)(int64_t h, int32_t buf, int64_t off, rp_bytes dst) {

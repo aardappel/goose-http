@@ -1,8 +1,8 @@
 # 053: Outbound connections
 
-Status: in-progress (asked for 2026-10-19). The blocking socket and the epoll and kqueue
-loop's half are built, on the branch `outbound`; see "Handover" at the end for what
-remains.
+Status: in-progress (asked for 2026-10-19). The blocking socket and the epoll, kqueue,
+and io_uring loops' half are built; io_uring's is on the branch `uring-outbound`
+(2026-10-22), for review. See "Handover" at the end for what remains.
 
 The loop opens TCP connections to other servers, not only accepts them. goose-postgres
 needs them (its task 001), and so do the ACME package's requests to its directory over
@@ -36,7 +36,9 @@ goose-postgres's blocking facade (its task 002) takes that socket as its transpo
 
 - [x] The API and the owning thread recorded in `docs/decisions.md` and `docs/api.md`
 - [ ] Connect, read, write, and close work on epoll, io_uring, kqueue, and IOCP, each
-      with a test (epoll and kqueue done; io_uring and IOCP fail with `ENOSYS`)
+      with a test (epoll, kqueue, and io_uring done, io_uring with a test of its
+      stale poll and of a socket hung up at `TIMEOUT`; the emulated ring and IOCP fail
+      with `ENOSYS`)
 - [x] A refused connection and a connect timeout reach the program as errors
 - [ ] A blocking socket for lanes, with a test, on Linux, macOS, and Windows (Linux and
       macOS pass; Windows's shim compiles, with Zig's MinGW target, but hasn't run)
@@ -94,9 +96,8 @@ On 2026-10-19, at Goose `dcc2747`, the pin:
 
 1. goose-postgres's task 002 builds its facade on the blocking calls (below), and task
    005 its pool on `wait_socket`.
-2. io_uring, on the Windows desktop next: `IORING_OP_CONNECT`, and readiness through
-   `IORING_OP_POLL_ADD` with the key as its tag, which `uring.goose` would deliver as
-   the epoll loop does.
+2. ~~io_uring~~: built on the branch `uring-outbound` (2026-10-22); see "io_uring"
+   below.
 3. The emulated ring and IOCP: the emulation can arm its own epoll instance or kqueue
    as `net_arm` does; IOCP needs `ConnectEx` and a zero-byte `WSARecv` for readability.
 4. Name resolution off the loop: `getaddrinfo` on a lane, or in the blocking `connect`
@@ -106,7 +107,35 @@ On 2026-10-19, at Goose `dcc2747`, the pin:
    socket, and Windows may refuse a connect to a full backlog with `ECONNREFUSED` where
    the blocking test expects `ETIMEDOUT`.
 6. An h2 stream waiting on a socket: `delivered` finds it by its key, but no test covers
-   it yet.
+   it yet. On io_uring, a stream reset while it waits leaves its poll armed until the
+   socket's event or the connection's close: its key matches no later wait, but the
+   poll holds a socket the handler hung up at `CLOSED` open until then.
+
+### io_uring
+
+Built 2026-10-22, on the branch `uring-outbound`
+([decision](../docs/decisions.md#io_uring-cancels-a-sockets-poll-when-its-wait-ends)):
+
+- `uring.goose` calls `ring_bind` when waiting is configured, so `net_arm` queues a
+  one-shot `IORING_OP_POLL_ADD` on the worker's ring (`ur_arm` in `shim/uring.c`,
+  reached through `net_loop_ring`, so `shim/net.c` still links without `uring.c`).
+  The connect is `connect_start`'s non-blocking one, polled for writable.
+- The key stays in a record of the shim's; its completion carries the tag
+  `RING_SOCKET` and the record's index, and `ring_socket` turns it into the key, or 0
+  for a stale one. The loop reads it only on the path for completions that match no
+  connection.
+- `resume` calls `ring_disarm(r, key, ~0)` as a wait ends, by `WAKE` or `TIMEOUT`,
+  and `close_conn` calls it for the connection's slot before `CLOSED`, when an
+  exchange waits or the connection is h2c. The call sits in `resume` once: one in each
+  of `delivered`'s and `timed_out`'s paths cost `/plaintext` 2 user instructions per
+  request on io_uring, though none runs there.
+- The emulated ring and IOCP get no-op `ur_bind`, `ur_socket`, and `ur_disarm`, and
+  `wait_socket` stays `ENOSYS` there.
+- `test/outbound/outbound_loop.goose` runs every route on `serve` too, and on io_uring
+  `/stale`, a socket that becomes readable after its wait's `TIMEOUT`, which must not
+  wake the next wait, and `/hangup`, a socket hung up at `TIMEOUT`, which the backend
+  must see closed before it takes the next connection. With `ur_disarm` made a no-op,
+  both fail. On the emulated ring each route checks the `ENOSYS`.
 
 ### What goose-postgres's facade calls
 
@@ -134,7 +163,8 @@ Postgres 18 is recorded under "What passes".
   whose exchange stopped waiting, by `TIMEOUT` or mail, can still raise its event
   later, while the same exchange waits for something else: it gets a `WAKE` with
   `SOCKET_READY` that means nothing. Hang up the socket at `TIMEOUT`, or treat it as
-  "try again".
+  "try again". io_uring cancels the poll instead, since it would hold a hung-up socket
+  open.
 - The connect-timeout tests fill a listener's backlog of 1 with eight connects that are
   never accepted; Linux and macOS then drop the next SYN.
 

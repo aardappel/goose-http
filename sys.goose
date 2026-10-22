@@ -106,8 +106,9 @@ extern fn net_poll(fd: i32, events: u32, ms: i32) -> i32;
 // which net_arm adds to: epoll_loop's, while it runs.
 extern fn net_loop_bind(ep: i32);
 // Watches fd on that poller for events once: the next event carries tag,
-// and fd raises none after it until it's armed again. -ENOSYS on a thread
-// whose loop isn't epoll_loop.
+// and fd raises none after it until it's armed again. Without one, on the
+// io_uring ring that ring_bind bound on Linux, with a one-shot poll. -ENOSYS
+// on a thread that runs neither.
 extern fn net_arm(fd: i32, events: u32, tag: u64) -> i32;
 
 extern fn net_epoll_create() -> i32;

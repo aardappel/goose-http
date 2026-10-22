@@ -641,9 +641,10 @@ and bytes that arrive while no exchange waits wait in the kernel, not in a buffe
 loop's that someone must drain. The cost is the readiness pattern's: a `WAKE` may find
 nothing to read, so a handler treats `SOCKET_READY` as "try again".
 
-**Where it doesn't run yet.** `serve`'s completion loops, io_uring (`IORING_OP_CONNECT`
-and its receives into provided buffers), the emulated ring, and IOCP (`ConnectEx`), fail
-`wait_socket` with `ENOSYS`, and the exchange doesn't wait. The failure comes at the
+**Where it doesn't run yet.** The emulated ring and IOCP (`ConnectEx`) fail
+`wait_socket` with `ENOSYS`, and the exchange doesn't wait; io_uring runs it with a
+one-shot poll (2026-10-22, [io_uring cancels a socket's poll when its wait
+ends](#io_uring-cancels-a-sockets-poll-when-its-wait-ends)). The failure comes at the
 call, not at startup as for an h2c or TLS listener, since `serve` can't know whether a
 handler will call `wait_socket`. The blocking calls work on every platform, Windows included, where a Unix socket
 is `EAFNOSUPPORT`.
@@ -743,6 +744,37 @@ grants a growth when it comes and so refuses it then; and a budget of 0 for none
 leaves a program's runs bounded only by `Config.max_conns` times its limits. A Goose
 slice pool that reported its free spans, or allocated within a bound and failed
 otherwise, would let the length be bounded too.
+
+## io_uring cancels a socket's poll when its wait ends
+
+Decided 2026-10-22, task 053.
+
+On io_uring, `wait_socket` queues a one-shot `IORING_OP_POLL_ADD` for the waiting
+exchange's key, and the loop hands its completion to the exchange as epoll's event,
+`WAKE` with `SOCKET_READY`. The connect stays `connect_start`'s non-blocking one, which
+the poll then waits on for writable, as epoll does. `IORING_OP_CONNECT` would need a
+second `connect_start` for the ring and a second kind of completion to route, where
+the poll needs neither.
+
+When the wait ends another way, by `TIMEOUT`, by mail, by another socket's readiness,
+or with its connection's close, the loop cancels the poll (`ring_disarm`), and the
+shim marks its record stale, so a completion already in the queue is dropped. The
+cancel, not a stale mark alone, is what's needed: an io_uring poll holds a reference to
+the socket, so a socket the handler hangs up at `TIMEOUT` would stay open, and its
+peer, such as a database waiting for a query, would never see the close. The stale
+mark covers the completion that arrived before the cancel. Epoll needs neither: closing
+the socket removes it from the poller. epoll and kqueue keep the trap that task 053
+records, a `WAKE` in the exchange's next wait.
+
+The key takes all 64 bits, more than a ring tag's 62, so the shim keeps it in a record
+and the completion carries the record's index, under the tag `RING_SOCKET`, which no
+connection has. That completion is read only on the path for completions that match no
+connection, and the shim tells it from receives and sends by the bit it already tests
+for cancels, so the request path costs nothing more. Each wait that ends, and each
+connection's close, makes one call, which returns at once when nothing is armed.
+
+Rejected: a stale mark alone, which keeps a hung-up socket open; and a generation per
+wait in the tag, for which the key has no bits left.
 
 ## Not yet decided
 

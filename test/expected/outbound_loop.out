@@ -3,4 +3,13 @@
 /closes: HTTP/1.1 200 OK: closed after ""
 /refused: HTTP/1.1 502 Bad Gateway: connect refused
 /timeout: HTTP/1.1 504 Gateway Timeout: connect timed out
-/ping: HTTP/1.1 502 Bad Gateway: wait_socket ENOSYS
+/hangup: HTTP/1.1 200 OK: hung up
+/ping: HTTP/1.1 200 OK: pongpong
+serve /ping: true
+serve /large: true
+serve /closes: true
+serve /refused: true
+serve /timeout: true
+serve /stale: true
+serve /hangup: true
+serve /ping: true

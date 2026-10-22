@@ -552,7 +552,7 @@ http::mail_close(box);
 Connections the program opens to another server, such as a database: TCP, or a Unix
 socket on Linux and macOS. Shown in `test/outbound/`:
 `outbound_blocking.goose` for a lane's thread, `outbound_loop.goose` for a handler on
-`serve_epoll`.
+`serve_epoll` and on `serve`.
 
 An `http::Socket` is the connection, `fd` -1 for none. A host is `localhost`, an IPv4
 or IPv6 address, bracketed or not, or `unix:PATH`, whose port is ignored. Any other
@@ -585,7 +585,8 @@ http::hangup(s);
 
 ### On the worker's loop
 
-A handler with state on `serve_epoll` drives a socket without blocking: the worker that
+A handler with state on `serve_epoll`, or on `serve` with io_uring, drives a socket
+without blocking: the worker that
 asked owns it, and the exchange waits for it as it waits for mail
 ([answers that wait](#answers-that-wait)), so `Config.mail_slots` and
 `Config.max_waiting` must turn waiting on:
@@ -613,8 +614,12 @@ http::wait_socket(out, st.s, http::READABLE, 1000);
   the handler, until `s` is ready for `http::READABLE`, `http::WRITABLE`, or both, or
   for at most `ms`. The handler is then called with `WAKE`, whose `ev.tag` is
   `http::SOCKET_READY`, or with `TIMEOUT`. A message to the exchange's address ends the
-  wait too, as after `later`. Its `http::Error` is 0, or `ENOSYS` on `serve`'s loop,
-  where the exchange doesn't wait and the handler answers.
+  wait too, as after `later`. Its `http::Error` is 0, or `ENOSYS` on `serve`'s
+  emulated ring and on IOCP, where the exchange doesn't wait and the handler answers.
+- A wait that ends another way, by `TIMEOUT`, by mail, or at `CLOSED`, leaves the
+  socket armed on epoll and kqueue: its event can still come as a `WAKE` with
+  `SOCKET_READY` in the exchange's next wait, which the handler treats as "try again".
+  io_uring cancels the socket's poll as the wait ends, so no such `WAKE` comes there.
 - `SOCKET_READY` means the socket was ready: by the time the handler reads, it may not
   be, so `recv` and `send` can still give `-EAGAIN`, and the handler waits again. A
   socket closed or failed is readable, and its `recv` gives 0 or `-code`. Keep
@@ -630,8 +635,8 @@ http::wait_socket(out, st.s, http::READABLE, 1000);
   A socket kept between requests is read by whichever exchange waits on it next; the
   loop reads nothing of it meanwhile.
 
-`http::serve`'s loops, io_uring, its emulation, and IOCP, don't watch sockets yet:
-`wait_socket` fails with `ENOSYS` there, and only the blocking calls work.
+`http::serve` watches sockets on io_uring only: on its emulation and on IOCP,
+`wait_socket` fails with `ENOSYS`, and only the blocking calls work.
 
 ## The store
 

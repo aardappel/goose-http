@@ -53,11 +53,26 @@ _Static_assert(sizeof(ur_bytes) == sizeof(void *) + 8 && sizeof(ur_completion) =
                "not packed as Goose packs them");
 
 /* A request's user_data: a Goose tag shifted left 2 (UR_TAGGED), a send
-   record's address (UR_SEND), or UR_QUIET for cancels and closes, whose
-   completions nobody needs. Tags fit in 62 bits. */
+   record's address (UR_SEND), UR_QUIET for cancels and closes, whose
+   completions nobody needs, or an armed socket's index shifted left 2
+   (UR_ARMED). Tags fit in 62 bits. */
 #define UR_TAGGED 0
 #define UR_SEND 1
 #define UR_QUIET 2
+#define UR_ARMED 3
+
+/* A socket net_arm armed on the ring (ur_arm): a one-shot poll for the key of
+   the exchange that waits for it. A key takes 64 bits, so it stays here, and
+   the poll's completion reaches Goose as the ring's socket tag with the
+   record's index in buf, for ur_socket to turn into the key. A record
+   disarmed before its completion is read is stale: its completion is
+   dropped, and ur_socket gives 0. */
+enum { UR_ARM_FREE, UR_ARM_POLLING, UR_ARM_REPORTED, UR_ARM_STALE };
+struct ur_arm {
+    uint64_t key;
+    int32_t state;
+    int32_t next;           /* the next free record, or -1 */
+};
 
 /* A send's bytes, owned by the ring until the send's last completion.
    Records of up to UR_SMALL bytes come in UR_CLASSES powers of two from
@@ -133,12 +148,22 @@ struct ur {
     int64_t waker;
     int32_t wfd;
     uint64_t wtag;
+    /* The armed sockets' records, those in use below narms, how many are
+       polling or reported, and their completions' tag (ur_bind). */
+    struct ur_arm *arms;
+    int32_t narms, caparms, freearm, live;
+    uint64_t stag;
 };
+
+/* The ring net_arm arms sockets on: the calling thread's, once ur_bind binds
+   it. */
+static _Thread_local struct ur *ur_bound;
 
 /* From shim/net.c. */
 int64_t net_waker(int32_t ep, uint64_t tag);
 int32_t net_waker_fd(int64_t w);
 void net_waker_clear(int64_t w);
+void net_loop_ring(int32_t (*arm)(int32_t fd, uint32_t events, uint64_t tag));
 
 /* shim/ring_epoll.c, built with its functions named urp_*. */
 int64_t urp_create(int32_t entries, int32_t nbufs, int32_t buflen, int32_t flags);
@@ -587,6 +612,81 @@ int64_t ur_waker(int64_t h, uint64_t tag) {
     return w;
 }
 
+/* Queues a one-shot poll of fd for events, POLLIN or POLLOUT, which are
+   EPOLLIN and EPOLLOUT, on the bound ring, for key: net_arm's, while
+   ur_bind binds it. */
+static int32_t ur_arm(int32_t fd, uint32_t events, uint64_t key) {
+    struct ur *u = ur_bound;
+    int32_t k;
+    if (u->freearm) {
+        k = u->freearm - 1;
+        u->freearm = u->arms[k].next + 1;
+    } else {
+        if (u->narms == u->caparms) {
+            int32_t cap = u->caparms ? u->caparms * 2 : 16;
+            struct ur_arm *g = realloc(u->arms, (size_t)cap * sizeof *g);
+            if (!g) return -ENOMEM;
+            u->arms = g;
+            u->caparms = cap;
+        }
+        k = u->narms++;
+    }
+    u->arms[k] = (struct ur_arm){ .key = key, .state = UR_ARM_POLLING, .next = -1 };
+    u->live++;
+    struct io_uring_sqe *sqe = ur_sqe(u);
+    io_uring_prep_poll_add(sqe, fd, (events & (POLLIN | POLLOUT)) | POLLRDHUP);
+    io_uring_sqe_set_data64(sqe, (uint64_t)k << 2 | UR_ARMED);
+    return 0;
+}
+
+/* Makes net_arm, on the calling thread, arm sockets on ring h, with
+   completions of tag, until h is destroyed. The emulation isn't bound, and
+   net_arm stays ENOSYS on it. */
+void ur_bind(int64_t h, uint64_t tag) {
+    if (UR_EMULATED(h)) return;
+    struct ur *u = (struct ur *)(intptr_t)h;
+    u->stag = tag;
+    ur_bound = u;
+    net_loop_ring(ur_arm);
+}
+
+static void ur_arm_free(struct ur *u, int32_t k) {
+    u->arms[k].state = UR_ARM_FREE;
+    u->arms[k].next = u->freearm - 1;
+    u->freearm = k + 1;
+}
+
+/* Makes stale every socket armed for a key whose bits under mask are key's,
+   and cancels its poll if it's still in the kernel, which holds the socket
+   open until then. */
+void ur_disarm(int64_t h, uint64_t key, uint64_t mask) {
+    if (UR_EMULATED(h)) return;
+    struct ur *u = (struct ur *)(intptr_t)h;
+    if (!u->live) return;
+    for (int32_t k = 0; k < u->narms; k++) {
+        struct ur_arm *a = &u->arms[k];
+        if ((a->state != UR_ARM_POLLING && a->state != UR_ARM_REPORTED) || ((a->key ^ key) & mask)) continue;
+        if (a->state == UR_ARM_POLLING) {
+            struct io_uring_sqe *sqe = ur_sqe(u);
+            io_uring_prep_cancel64(sqe, (uint64_t)k << 2 | UR_ARMED, 0);
+            io_uring_sqe_set_data64(sqe, UR_QUIET);
+            sqe->flags |= IOSQE_CQE_SKIP_SUCCESS;
+        }
+        a->state = UR_ARM_STALE;
+        u->live--;
+    }
+}
+
+/* The key of the armed socket whose completion had buf k, or 0 when it was
+   disarmed since. Frees the record. */
+uint64_t ur_socket(int64_t h, int32_t k) {
+    struct ur *u = (struct ur *)(intptr_t)h;
+    uint64_t key = u->arms[k].state == UR_ARM_REPORTED ? u->arms[k].key : 0;
+    if (key) u->live--;
+    ur_arm_free(u, k);
+    return key;
+}
+
 /* Copies dst.len bytes of provided buffer buf from off into dst. */
 void ur_take(int64_t h, int32_t buf, int64_t off, ur_bytes dst) {
     if (UR_EMULATED(h)) {
@@ -638,8 +738,21 @@ int32_t ur_wait(int64_t h, ur_completions out, int32_t timeout_ms) {
         if (n == out.len) break;
         seen++;
         uint64_t ud = cqe->user_data;
-        if ((ud & 3) == UR_QUIET) continue;
         ur_completion *c = &out.data[n];
+        /* UR_QUIET and UR_ARMED in one test, which receives and sends don't
+           pass. */
+        if (ud & 2) {
+            if ((ud & 3) == UR_QUIET) continue;
+            int32_t k = (int32_t)(ud >> 2);
+            if (u->arms[k].state == UR_ARM_STALE) {
+                ur_arm_free(u, k);
+                continue;
+            }
+            u->arms[k].state = UR_ARM_REPORTED;
+            *c = (ur_completion){ .tag = u->stag, .res = cqe->res, .buf = k, .more = 0, .send = 0 };
+            n++;
+            continue;
+        }
         if ((ud & 3) == UR_SEND) {
             struct ur_send *s = (struct ur_send *)(uintptr_t)(ud & ~(uint64_t)3);
             if (s->file >= 0) {
@@ -735,5 +848,10 @@ void ur_destroy(int64_t h) {
     free(u->bufs);
     free(u->fds);
     free(u->sent);
+    free(u->arms);
+    if (ur_bound == u) {
+        ur_bound = NULL;
+        net_loop_ring(NULL);
+    }
     free(u);
 }

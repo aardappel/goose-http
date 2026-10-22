@@ -369,12 +369,22 @@ void net_loop_bind(int32_t ep) {
     net_loop_ep = ep;
 }
 
+/* How the io_uring ring the calling thread runs arms a socket, if it runs
+   one: shim/uring.c's ur_bind sets it, so a program without uring.c, such as
+   a mail test, links. */
+static _Thread_local int32_t (*net_loop_arm)(int32_t fd, uint32_t events, uint64_t tag);
+
+void net_loop_ring(int32_t (*arm)(int32_t fd, uint32_t events, uint64_t tag)) {
+    net_loop_arm = arm;
+}
+
 /* Watches fd on the calling thread's loop for events once: its next event
    carries tag, and then fd raises none until it is armed again. Level-
-   triggered, so a socket ready already raises it at once. -ENOSYS on a
-   thread that runs no epoll loop. */
+   triggered, so a socket ready already raises it at once. On an io_uring
+   loop, a one-shot poll (net_loop_arm). -ENOSYS on a thread that runs
+   neither. */
 int32_t net_arm(int32_t fd, uint32_t events, uint64_t tag) {
-    if (net_loop_ep < 0) return -ENOSYS;
+    if (net_loop_ep < 0) return net_loop_arm ? net_loop_arm(fd, events, tag) : -ENOSYS;
     struct epoll_event ev = { .events = (events & (EPOLLIN | EPOLLOUT)) | EPOLLRDHUP | EPOLLONESHOT,
                               .data.u64 = tag };
     if (epoll_ctl(net_loop_ep, EPOLL_CTL_MOD, fd, &ev) == 0) return 0;

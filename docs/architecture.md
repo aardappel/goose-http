@@ -407,8 +407,15 @@ with a key goes to the exchange through the path a message takes, as `WAKE` with
 reads or writes the socket, and keeps no state for it: the handler does both, into
 buffers of the program's, and a socket that's armed again after its event is modified,
 not added. Closing the socket takes it off the poller. Each loop lists its poller in a
-thread-local of the shim while it runs, which `net_arm` finds; a thread with none, such
-as one running `serve`'s completion loop, gets `ENOSYS`.
+thread-local of the shim while it runs, which `net_arm` finds.
+
+On `serve`'s io_uring ring, `ring_bind` lists the ring instead, and `net_arm` queues a
+one-shot `IORING_OP_POLL_ADD`. The key stays in a record of the shim's, and the
+completion comes with the tag `RING_SOCKET` and the record's index, on the path for
+completions that match no connection. A wait that ends another way, and a connection's
+close, cancel the poll, which would otherwise hold the socket open after the handler
+hangs it up ([decisions](decisions.md#io_uring-cancels-a-sockets-poll-when-its-wait-ends)).
+A thread with neither, such as one running the emulated ring or IOCP, gets `ENOSYS`.
 
 ## The store
 

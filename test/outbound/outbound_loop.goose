@@ -1,8 +1,11 @@
-// Outbound connections on serve_epoll's loop (socket.goose): each route
-// connects to a backend thread in the program, waits with wait_socket, and answers
-// with what came back: a round trip, a large send, a backend that closes, a
-// refused connect, and a connect that times out against a full backlog. On
-// serve's loop, wait_socket fails with ENOSYS. The loops listen on Unix
+// Outbound connections on serve_epoll's loop and serve's (socket.goose): each
+// route connects to a backend thread in the program, waits with wait_socket,
+// and answers with what came back: a round trip, a large send, a backend that
+// closes, a refused connect, a connect that times out against a full backlog,
+// and a socket hung up at TIMEOUT, which the backend must see closed before
+// it takes the next connection. On io_uring, a socket that becomes readable
+// after its wait timed out doesn't wake the exchange's next wait. On the
+// emulated ring, wait_socket fails with ENOSYS. The loops listen on Unix
 // sockets in the TMPDIR test/run_tests.py gives each run, so parallel runs
 // share no port.
 import std;
@@ -44,7 +47,8 @@ fn send_text(fd: i32, text: const u8[:]) {
 
 // The backend, blocking, one connection after another, by the first byte
 // each sends: p answers pong to each p, c counts the bytes until the client
-// shuts its side and answers the count, x closes at once, and q ends.
+// shuts its side and answers the count, w reads until the client closes and
+// answers nothing, x closes at once, and q ends.
 thread_fn backend(lfd: i32) {
     var buf: u8[>..] = [];
     buf.resize(65536, 0);
@@ -69,6 +73,9 @@ thread_fn backend(lfd: i32) {
             } else if cmd == 'c' {
                 counting = true;
                 count = n;
+            } else if cmd == 'w' {
+                while http::net_recv(fd, buf) > 0 {}
+                break;
             }
         }
         if counting {
@@ -85,12 +92,15 @@ thread_fn backend(lfd: i32) {
 let PING: u8 = 1;
 let LARGE_SEND: u8 = 2;
 let CLOSES: u8 = 3;
+let HANGUP: u8 = 4;
+let STALE: u8 = 5;
 
 // A request's state: its backend socket, what it's doing, and what it got.
 struct St {
     s: http::Socket = http::Socket { .. },
     route: u8 = 0,
     connecting: bool = false,
+    timed_out: bool = false,
     sent: i64 = 0,
     got: u8[..32] = [],
 }
@@ -116,6 +126,8 @@ fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const
         if path == "/ping" { st.route = PING; }
         else if path == "/large" { st.route = LARGE_SEND; }
         else if path == "/closes" { st.route = CLOSES; }
+        else if path == "/hangup" { st.route = HANGUP; }
+        else if path == "/stale" { st.route = STALE; }
         else if path == "/refused" { st.route = PING; port = ports.refused; }
         else if path == "/timeout" { st.route = PING; port = ports.full; }
         else { http::respond(out, 404, "text/plain", ""); return; }
@@ -133,10 +145,27 @@ fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const
         return;
     }
     if ev.kind == http::TIMEOUT {
-        answer(st, out, 504, if st.connecting { "connect timed out" } else { "timed out" });
+        if st.route == HANGUP && !st.connecting {
+            answer(st, out, 200, "hung up");
+            return;
+        }
+        if st.route == STALE && !st.connecting && !st.timed_out {
+            // The backend answers once this side shuts, while the exchange
+            // waits for something else.
+            st.timed_out = true;
+            http::net_shutdown(st.s.fd, http::SHUT_WR);
+            http::later(out, 200);
+            return;
+        }
+        answer(st, out, if st.timed_out { 200 } else { 504 },
+               if st.timed_out { "no stale wake" } else if st.connecting { "connect timed out" } else { "timed out" });
         return;
     }
     guard ev.kind == http::WAKE && ev.tag == http::SOCKET_READY else { return; }
+    if st.timed_out {
+        answer(st, out, 500, "stale wake");
+        return;
+    }
     if st.connecting {
         let c = http::connected(st.s);
         if c.code == http::EINPROGRESS {
@@ -147,6 +176,8 @@ fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const
         st.connecting = false;
         if st.route == PING { assert(http::send(st.s, "pp") == 2); }
         if st.route == CLOSES { assert(http::send(st.s, "x") == 1); }
+        if st.route == HANGUP { assert(http::send(st.s, "w") == 1); }
+        if st.route == STALE { assert(http::send(st.s, "c") == 1); }
     }
     if st.route == LARGE_SEND && st.sent < large.len {
         while st.sent < large.len {
@@ -164,7 +195,9 @@ fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const
     loop {
         let n = http::recv(st.s, buf);
         if n == -http::EAGAIN {
-            http::wait_socket(out, st.s, http::READABLE, 5000);
+            // The backend answers neither of these yet.
+            let quiet = st.route == HANGUP || st.route == STALE;
+            http::wait_socket(out, st.s, http::READABLE, if quiet { 50 } else { 5000 });
             return;
         }
         guard n >= 0 else { failed(st, out, http::Error { call: "recv", code: -n }); return; }
@@ -189,22 +222,15 @@ thread_fn worker(cfg: http::Config, ports: Ports) {
     http::report(e);
 }
 
-// serve's loop: wait_socket fails.
 thread_fn ring_worker(cfg: http::Config, ports: Ports) {
-    let e = http::serve(cfg, St { .. }) { ev, st, out =>
-        if ev.kind == http::REQUEST {
-            let s, d = http::connect_start("127.0.0.1", ports.backend);
-            assert(d.code == 0);
-            st.s = s;
-            let w = http::wait_socket(out, st.s, http::WRITABLE, 300);
-            if w.code != 0 { failed(st, out, w); } else { answer(st, out, 500, "waits"); }
-        }
-    };
+    var large: u8[>..] = [];
+    large.resize(LARGE, 'c');
+    let e = http::serve(cfg, St { .. }) { ev, st, out => handle(ev, st, out, ports, large); };
     http::report(e);
 }
 
-// A request to the loop at address, and its status line and body.
-fn get(address: const u8[:], path: const u8[:]) {
+// A request to the loop at address: its status line and body.
+fn get(address: const u8[:], path: const u8[:]) -> u8[>..] {
     var s = http::Socket { .. };
     for i in 500 {
         let c, e = http::connect(address, 0, 1000);
@@ -227,7 +253,24 @@ fn get(address: const u8[:], path: const u8[:]) {
     let line = find(got, "\r\n");
     let head = find(got, "\r\n\r\n");
     assert(line > 0 && head >= line);
-    print(path, ": ", got[..line], ": ", got[head + 4..]);
+    var text: u8[>..] = [];
+    format(text, got[..line], ": ", got[head + 4..]);
+    return text;
+}
+
+fn on_epoll(address: const u8[:], path: const u8[:]) {
+    print(path, ": ", get(address, path));
+}
+
+// A route on serve's loop: on io_uring, answered as want says; on the
+// emulated ring, wait_socket's ENOSYS, or a refusal before it.
+fn on_ring(address: const u8[:], path: const u8[:], want: const u8[:], native: bool) {
+    let got = get(address, path);
+    let ok = if native { got == want } else {
+        got == "HTTP/1.1 502 Bad Gateway: wait_socket ENOSYS" || got == "HTTP/1.1 502 Bad Gateway: connect refused"
+    };
+    if !ok { print("serve ", path, ": ", got); }
+    print("serve ", path, ": ", ok);
 }
 
 fn main() {
@@ -246,15 +289,26 @@ fn main() {
     let epoll = unix_address("epoll.sock");
     let cfg = http::Config { address: epoll, workers: 1, mail_slots: 16, max_waiting: 16, .. };
     let w = thread_spawn(worker, cfg, ports);
-    get(epoll, "/ping");
-    get(epoll, "/large");
-    get(epoll, "/closes");
-    get(epoll, "/refused");
-    get(epoll, "/timeout");
+    on_epoll(epoll, "/ping");
+    on_epoll(epoll, "/large");
+    on_epoll(epoll, "/closes");
+    on_epoll(epoll, "/refused");
+    on_epoll(epoll, "/timeout");
+    // A socket still open would keep the backend from the next connection.
+    on_epoll(epoll, "/hangup");
+    on_epoll(epoll, "/ping");
     let ring = unix_address("ring.sock");
     let rcfg = http::Config { address: ring, workers: 1, mail_slots: 16, max_waiting: 16, .. };
     let r = thread_spawn(ring_worker, rcfg, ports);
-    get(ring, "/ping");
+    let native = http::ring_probe() == 0;
+    on_ring(ring, "/ping", "HTTP/1.1 200 OK: pongpong", native);
+    on_ring(ring, "/large", "HTTP/1.1 200 OK: closed after \"4194304\"", native);
+    on_ring(ring, "/closes", "HTTP/1.1 200 OK: closed after \"\"", native);
+    on_ring(ring, "/refused", "HTTP/1.1 502 Bad Gateway: connect refused", native);
+    on_ring(ring, "/timeout", "HTTP/1.1 504 Gateway Timeout: connect timed out", native);
+    on_ring(ring, "/stale", "HTTP/1.1 200 OK: no stale wake", native);
+    on_ring(ring, "/hangup", "HTTP/1.1 200 OK: hung up", native);
+    on_ring(ring, "/ping", "HTTP/1.1 200 OK: pongpong", native);
     http::stop();
     thread_wait(w);
     thread_wait(r);

@@ -21,6 +21,12 @@ import h2;
 let RING_LISTENER: u64 = 0xFFFFFFFF;
 // The tag of the waker's completions (ring_waker): mail in the box, or a stop.
 let RING_WAKE: u64 = 0xFFFFFFFE;
+// The tag of an outbound socket's readiness, which wait_socket armed on the
+// ring (ring_bind): RING_WAKE - MAX_LISTENERS - 1, below the listeners', so
+// it's no connection's.
+let RING_SOCKET: u64 = 0xFFFFFFFA;
+// The bits of a later's key that hold its connection's slot (later_base).
+let SLOT_BITS: u64 = 0xFFFFF00000000000;
 
 fn ring_listener_tag(k: i64) -> u64 {
     return if k == 0 { RING_LISTENER } else { RING_WAKE - (k as u64) };
@@ -121,6 +127,7 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
         return opened;
     }
     let waiting = box.handle.slot >= 0;
+    if waiting { ring_bind(r, RING_SOCKET); }
     var timers = timer_table(if waiting { cfg.max_waiting } else { 0 });
     // Exchanges owed TIMEOUT for want of a timer, by their keys.
     var overdue: u64[>..] = [];
@@ -227,6 +234,10 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
 
     fn close_conn(i: i64) {
         let c .= conns[i];
+        // Before CLOSED, whose handler may hang up a socket that a poll
+        // would hold open. Only an exchange that waits has one armed, and
+        // any of an h2c connection's streams may.
+        if c.x.stream.waiting || c.h2 >= 0 { ring_disarm(r, c.x.stream.later.key, SLOT_BITS); }
         abandon(c, H);
         cancel(timers, c.x.timer);
         if c.h2 >= 0 {
@@ -417,6 +428,13 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
     // Goes on with c's exchange, which waited, with ev, its WAKE or TIMEOUT,
     // and then with what c holds.
     fn resume(c: RingConn<S>&, ev: const Event&) {
+        // The wait is over: a socket still armed for it would wake the
+        // exchange's next one with SOCKET_READY. Once, here: a call in each
+        // of delivered's and timed_out's paths cost the request path 2 user
+        // instructions (bench/count.sh), though none of them runs there.
+        if ev.kind != NO_EVENT {
+            ring_disarm(r, if wake_at >= 0 { h2streams[wake_at].x.stream.later.key } else { c.x.stream.later.key }, ~0);
+        }
         progress = false;
         c.stalled = false;
         let src = c.held;
@@ -665,6 +683,13 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
                 }
                 let i = (cq.tag & 0xFFFFFFFF) as i64;
                 if i >= conns.len || conns[i].tag != cq.tag {
+                    // An outbound socket that wait_socket armed, here off
+                    // the connections' path.
+                    if cq.tag == RING_SOCKET {
+                        let key = ring_socket(r, cq.buf);
+                        if key != 0 { delivered(key, SOCKET_READY, ""); }
+                        continue;
+                    }
                     // The connection closed after the request was queued.
                     if cq.buf >= 0 { ring_give(r, cq.buf); }
                     continue;
