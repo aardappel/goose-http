@@ -2,6 +2,76 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
+## v0.5.0 (2026-10-22)
+
+Conveniences split into public parts, a budget for the gather pool, and TLS on the
+io_uring loop. Goose `v2026.3`, goose-hash `v0.0.4`, goose-tls `v0.0.3`, and
+goose-compress `v0.1.1`.
+
+Breaking:
+
+- `http::ws_upgrade(req, ws, out)` and `ws_upgrade(req, ws, out, protocol)` take the
+  connection's `WebSocket`, which they admit to the gather pool. Where the worker's
+  budget can't hold it, the upgrade gets 503 with `Retry-After: 1`, and the connection
+  stays open.
+- `WebSocket.limit` defaults to 64 KiB, from 1 MiB.
+- `WebSocket`'s `pending` and `message` are one run, `held`, whose first `joined`
+  bytes are the message so far.
+- `http::gather` answers a body its worker's budget can't hold with 503 and
+  `Retry-After: 1` at its head, and closes the connection. A chunked body is promised
+  its `limit`. `gather_head` takes the `limit` and returns whether it was promised, and
+  `gather_piece` returns false past the promise.
+
+Added:
+
+- The gather pool has a budget in each worker, the most bytes it promises its runs at
+  once: `http::GATHER_BUDGET`, 64 MiB, unless `http::gather_budget(bytes)` sets
+  another. A body is promised its bytes at its head, a Content-Length's exact size or a
+  chunked body's `limit`, and a WebSocket at its upgrade; a run admitted is never
+  refused later. The pool's parts are public, for a framework's own runs under the same
+  budget: an `http::Gather`'s bytes are `http::gathered[g.at..g.at + g.len]`, and
+  `gather_promise`, `gather_piece`, `gather_clear`, `gather_head`, and
+  `release_gather` promise, fill, empty, and give back a run. `http::ws_admit(ws)`
+  promises a WebSocket its `limit` and `http::WS_SLACK`, 131 bytes, for a control frame
+  not yet whole after a message nearly at the limit
+  ([decision](docs/decisions.md#the-gather-budget-counts-bytes-promised-and-refuses-at-admission)).
+- WebSocket's parts: `http::ws_check(req, minor)` returns the upgrade's status, the
+  key, and the fields a refusal must carry, and writes nothing; `http::ws_switch(out,
+  key, protocol)` writes the 101 and switches the connection; and `http::ws_take(bytes,
+  ws, out)` reads frames from bytes the program holds, with `ws_release` at `CLOSED`.
+  `ws_upgrade` and `ws_read` compose them, and answer byte for byte as before
+  ([api](docs/api.md#websocket)).
+- A `TIMEOUT` given because no room was left to wait (`Config.max_waiting`) has the tag
+  `http::NO_ROOM`, so a handler can answer 503 there and 504 for a time limit.
+- `http::unrouted(r)` returns the status `otherwise` answers a request no route took,
+  501, 400, 204, 405, or 404, and `otherwise` composes it.
+  `http::unrouted(method, path, routable, allow)` gives the same status to a router of
+  the program's own.
+- `docs/api.md`'s "Parts" lists the checks and writers the helpers are made of, for a
+  framework that answers in its own shape: `has_type`, `negotiate`, `known_method`,
+  `is_routable`, `same_segment`, `field_in`, `parse`, `forwarded_client`, `H2_MINOR`
+  and `switched`, `unrouted`, `field_at`, `same_name`, compression's `coding_for`,
+  `coding_q`, `compressible`, `coding_field`, and `compress_whole`, `status_line`,
+  `write_body`, `refuse`, `Stream` and `Framing`, and the gather pool's parts. A change
+  to one is an API change
+  ([decision](docs/decisions.md#every-convenience-is-a-composition-of-public-parts)).
+- HTTPS on the io_uring loop: `http::serve(cfg, server)` and `serve(cfg, fresh,
+  server)` serve the listeners that ask for TLS, as `serve_epoll` does. An idle TLS
+  connection that times out, or one a stop closes, sends close_notify. On Windows,
+  `serve` still fails with `ENOSYS` on a TLS listener.
+- kTLS on the epoll loop on Linux: a context that asks with goose-tls's
+  `tls::use_kernel(ctx)` hands each connection's record layer to the kernel after its
+  handshake. Handlers don't change, and io_uring's connections stay in user space.
+  Parked since: 9% fewer cycles on small responses doesn't justify it yet
+  ([decision](docs/decisions.md#ktls-is-the-contexts-choice-made-by-the-program)).
+- `docs/patterns.md` shows several processes on one port, each under the service
+  manager, so a crash resets only its own connections.
+- The benchmark server's TLS build serves on either loop, and HttpArena's entry runs it
+  on io_uring with the Rust entries' key exchange (`TLS_GROUPS`). The README records
+  HttpArena's json-tls and 8gbit against its Rust entries.
+
+Not yet: h2 over TLS, kTLS on io_uring, and TLS on Windows.
+
 ## v0.4.3 (2026-10-20)
 
 h2c's cost to HTTP/1.1 on the epoll loop removed, and `Config.require_ring`. Goose
