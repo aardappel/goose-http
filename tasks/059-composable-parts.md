@@ -28,7 +28,19 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
    `ws_take(bytes, ws, out)`, beside `ws_release` for `CLOSED`; `ws_read` calls one or
    the other. Done.
 3. [ ] **`body_within(taken, ev, out, limit)` writes its own 413**, and takes an
-   `Event` for its kind, data, and the request's length.
+   `Event` for its kind, data, and the request's length. Change: the verdict
+   `body_over(req, taken, limit) -> bool`, `taken > limit || !req.chunked &&
+   req.body > limit`, which gives `body_within`'s answer at `REQUEST`, whole or not,
+   and at `BODY`; `body_within` would add the event's bytes to `taken` and call it.
+   Not done: tried on 2026-10-22, it changes the request path's generated code.
+   Goose then inlines `body_within` into `answer` in `bench/rest/goose/rest.goose`
+   and `examples/upload/`, where it stayed a call, so the upload routes' C changes,
+   and only a count on Linux could say what that costs. A `body_over` beside an
+   unchanged `body_within` would leave the generated code as it is, but would repeat
+   the comparison rather than compose it. For the maintainer: either, after
+   `bench/count.sh` on the upload tier, or neither, since the verdict is one
+   comparison of numbers a framework holds, as goose-rest's `arrived` already makes
+   it.
 4. [ ] **`gather(ev, g, out, limit)` and its pool.** It takes an `Event`, writes 413
    and 500 itself, and fills the worker's pool `gathered` through `gather_head`,
    `gather_piece`, and `release_gather`, which `docs/api.md` doesn't list. goose-rest
@@ -130,7 +142,7 @@ Checked on macOS, at Goose v2026.3:
 - [x] Items 1 and 2: the parts in `websocket.goose`, with tests under
       `test/websocket/` and `docs/api.md`; the 101, the refusals, and the frames
       unchanged byte for byte, and the request path's generated code unchanged
-- [ ] Item 3 done, or the reason it waits recorded here
+- [x] Item 3 done, or the reason it waits recorded here
 - [ ] Item 4's design below, with its open questions
 - [ ] `scripts/test.sh` passes on macOS
 - [ ] Items 5 to 11 done or decided by the maintainer
