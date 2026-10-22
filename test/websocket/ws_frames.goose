@@ -14,7 +14,7 @@ struct St { ws: http::WebSocket = http::WebSocket { limit: 300, .. } }
 
 fn handle(ev: http::Event, st: St&, out: http::Reply) {
     if ev.kind == http::REQUEST {
-        http::ws_upgrade(ev.req, out);
+        http::ws_upgrade(ev.req, st.ws, out);
     } else {
         http::ws_read(ev, st.ws, out) { op, data, o => http::ws_send(o, op, data); };
     }
@@ -106,10 +106,13 @@ fn talk(name: const u8[:], data: const u8[:], step: i64 = 0) {
     while at < data.len {
         let to = min(at + k, data.len);
         handle(http::Event { kind: http::BODY, req: r, data: data[at..to], whole: false, trailers: "" }, st, reply);
+        // Never more than the message and a frame, which ws_admit promised.
+        assert(st.ws.held.cap <= st.ws.held.most);
         at = to;
     }
     let open = stream.open && keep;
     handle(http::Event { kind: http::CLOSED, req: r, data: "", whole: false, trailers: "" }, st, reply);
+    assert(http::gather_promised == 0 && st.ws.held.cap == 0);
     print(name, if open { " (open)" } else { " (closed)" });
     print(frames_of(out[mark..]));
 }

@@ -1556,7 +1556,8 @@ def ws_close(c, code=1000):
 def websocket(port):
     """/ws, an echo, as HttpArena's echo-ws profiles use it: one message at a
     time, 16 back to back, and 10 per connection before a new one upgrades;
-    and frames sent with the upgrade, fragments, a ping, and a large message.
+    and frames sent with the upgrade, fragments, a ping, a large message, and
+    one past the limit.
     RFC 6455's frame rules are tested in test/websocket/, and Autobahn's suite
     by scripts/test-autobahn.sh."""
     c = ws_open(port)
@@ -1582,13 +1583,21 @@ def websocket(port):
     c = ws_open(port, ws_frame(1, b"early") + ws_frame(9, b"ping"))
     if ws_read(c) != (1, b"early") or ws_read(c) != (10, b"ping"):
         fail("/ws: frames sent with the upgrade")
-    big = os.urandom(3 << 20)
+    big = os.urandom(60 << 10)
     third = len(big) // 3
     c.send(ws_frame(2, big[:third], fin=False) + ws_frame(0, big[third:2 * third], fin=False) +
            ws_frame(0, big[2 * third:]))
     if ws_read(c) != (2, big):
-        fail("/ws: a fragmented 3 MiB message")
+        fail("/ws: a fragmented 60 KiB message")
     ws_close(c, 4000)
+
+    # Past /ws's limit, 64 KiB by default (WS_LIMIT): a Close with 1009 from
+    # the frame's head alone.
+    c = ws_open(port)
+    c.send(ws_frame(2, os.urandom(65 << 10))[:14])
+    if ws_read(c) != (8, (1009).to_bytes(2, "big")):
+        fail("/ws: a message past the limit")
+    c.close()
 
     c = Conn(port)
     c.send(request(b"/ws"))

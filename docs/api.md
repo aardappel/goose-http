@@ -151,10 +151,17 @@ call's result to a reference parameter.
   of a handler with state, calls its block once with the whole body, however large, up
   to `limit` bytes. `st.body` is an `http::Gather` in the request's state. A body that
   came with its head goes to the block at `REQUEST`. A longer one is copied, with the
-  head, into a buffer of the worker's as it arrives, and goes to the block at `END`.
-  `CLOSED` frees what it held. Past `limit`, at most `Config.max_body`, it answers 413
-  and closes, as `body_within` does. The worker holds each gathered body whole, so keep
-  `limit` to what the program can hold at once.
+  head, into a run of the worker's gather pool as it arrives, and goes to the block at
+  `END`. `CLOSED` frees what it held. Past `limit`, at most `Config.max_body`, it
+  answers 413 and closes, as `body_within` does.
+- The gather pool has a budget in each worker: the most bytes it promises its runs at
+  once, `http::GATHER_BUDGET`, 64 MiB, unless `http::gather_budget(bytes)` sets another,
+  in `main` before `http::run`, for every worker, or in a worker before its loop. A body
+  is promised its bytes at its head: a Content-Length's exact size, or a chunked body's
+  `limit`. One the budget can't hold gets 503 with `Retry-After: 1` there, and the
+  connection closes; a body admitted is never refused later. A WebSocket is promised
+  its bytes at its upgrade ([WebSocket](#websocket))
+  ([decision](decisions.md#the-gather-budget-counts-bytes-promised-and-refuses-at-admission)).
 - `http::peer(out)`: the connection's address and port. `http::client(req, out,
   trusted)`: the client a trusted proxy forwarded for, from `Forwarded` or
   `X-Forwarded-For`, with `trusted` from `http::network("10.0.0.0/8")`.
@@ -214,6 +221,16 @@ that answers in its own shape
   the connection closes.
 - `http::Stream` and `http::Framing`: a response's state in `out.stream`, which a test
   harness builds to call a handler without a loop.
+- The gather pool's parts, which `gather` composes, for a framework's own runs under the
+  worker's budget. An `http::Gather` is a run and its promise: its bytes are
+  `http::gathered[g.at..g.at + g.len]`, in `g.cap` bytes that never pass `g.most`.
+  `http::gather_promise(g, most)` promises `g` up to `most` bytes, or returns false and
+  promises nothing where the budget can't hold them, the refusal a program answers.
+  `http::gather_piece(g, data)` appends, in a run that starts at 16 KB and doubles, up
+  to `g.most`, and returns false, appending nothing, past it. `http::gather_clear(g)`
+  frees the run and keeps the promise; `http::release_gather(g)` gives back both.
+  `http::gather_head(g, req, limit)` promises the head, rebuilt, and the body, as
+  `gather` does at `REQUEST`, and copies the head in; `parse` reads it again.
 
 ## Bodies and responses of any size
 
@@ -294,7 +311,7 @@ struct St { ws: http::WebSocket = http::WebSocket { limit: 1 << 16, .. } }
 thread_fn worker(cfg: http::Config) {
     let e = http::serve(cfg, St { .. }) { ev, st, out =>
         if ev.kind == http::REQUEST {
-            http::ws_upgrade(ev.req, out);
+            http::ws_upgrade(ev.req, st.ws, out);
         } else {
             http::ws_read(ev, st.ws, out) { op, data, o => http::ws_send(o, op, data); };
         }
@@ -303,20 +320,26 @@ thread_fn worker(cfg: http::Config) {
 }
 ```
 
-- `http::ws_upgrade(req, out)` at `REQUEST`: answers a `GET` that asks for
+- `http::ws_upgrade(req, st.ws, out)` at `REQUEST`: answers a `GET` that asks for
   `websocket` with 101 and `Sec-WebSocket-Accept`, computed for this request, and
-  returns true; the connection then carries frames. Otherwise it answers and returns
-  false: 426 with `Upgrade: websocket` to a request that doesn't ask for it, 426 with
-  `Sec-WebSocket-Version: 13` for another version, 400 for another method or a
-  `Sec-WebSocket-Key` that isn't 16 bytes in base64, and 501 on an h2 stream.
-  `http::ws_upgrade(req, out, protocol)` names a subprotocol in
+  returns true; the connection then carries frames into `st.ws`. Otherwise it answers
+  and returns false: 426 with `Upgrade: websocket` to a request that doesn't ask for
+  it, 426 with `Sec-WebSocket-Version: 13` for another version, 400 for another method
+  or a `Sec-WebSocket-Key` that isn't 16 bytes in base64, 501 on an h2 stream, and 503
+  with `Retry-After: 1` where the worker's gather budget can't promise the connection
+  its bytes ([Helpers for APIs](#helpers-for-apis)), which keeps the connection open.
+  `http::ws_upgrade(req, st.ws, out, protocol)` names a subprotocol in
   `Sec-WebSocket-Protocol`: one of those the client offered, which
   `http::field_of(req, "sec-websocket-protocol")` gives.
-- `ws_upgrade` is two parts, for a program that answers a refusal in its own shape.
+- `ws_upgrade` is three parts, for a program that answers a refusal in its own shape.
   `http::ws_check(req, out.minor)` answers nothing and returns the status, `ws_upgrade`'s
   101, 426, 400, or 501; for 101, the request's `Sec-WebSocket-Key`; and otherwise the
   fields the refusal must carry, whole lines ending in `\r\n`, which a 426 needs.
-  `http::ws_switch(out, key, protocol)` then writes the 101 and switches the
+  `http::ws_admit(st.ws)` promises the connection `WebSocket.limit` and 131 bytes of
+  the worker's gather pool, a message nearly at the limit and a control frame not yet
+  whole after it, or returns false where the budget can't hold them; `ws_take` holds
+  bytes only within that promise, and `ws_release` gives it back. Set the limit before
+  it. `http::ws_switch(out, key, protocol)` then writes the 101 and switches the
   connection. It leaves out a `protocol` that isn't a valid field value, where
   `ws_upgrade` answers 400; neither checks that the client offered it, which is the
   program's choice. Here in a function the handler calls:
@@ -327,6 +350,11 @@ thread_fn worker(cfg: http::Config) {
       http::start(out, status);
       out.buf.append(fields);
       http::finish(out, http::JSON, "{\"error\":\"no_websocket\"}");
+      return;
+  }
+  guard http::ws_admit(st.ws) else {
+      http::start(out, 503);
+      http::finish(out, http::JSON, "{\"error\":\"busy\"}");
       return;
   }
   http::ws_switch(out, key, "");
@@ -345,7 +373,7 @@ thread_fn worker(cfg: http::Config) {
   the same code, after which the connection closes. A frame the protocol forbids
   closes it with 1002 (unmasked, an RSV bit set, an unknown opcode, a control frame in
   fragments or longer than 125 bytes, a continuation out of place, a bad close code),
-  text that isn't UTF-8 with 1007, and a message longer than `WebSocket.limit`, 1 MiB
+  text that isn't UTF-8 with 1007, and a message longer than `WebSocket.limit`, 64 KiB
   by default, with 1009, each with a Close first. A frame's length is checked from its
   head, before its payload arrives.
 - `http::ws_send(out, op, data)` sends a message in one frame, at any event of the

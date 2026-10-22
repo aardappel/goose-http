@@ -5,7 +5,8 @@
 # permessage-deflate, an extension the package doesn't negotiate. Fails when a
 # case's behavior is other than OK, NON-STRICT, or INFORMATIONAL, or its close
 # other than OK or INFORMATIONAL, or a case doesn't run; the report is in
-# build/autobahn/reports/.
+# build/autobahn/reports/. The server takes messages of up to 16 MiB
+# (WS_LIMIT), the longest section 9 sends.
 #
 # The image is pinned by digest. It is built for x86-64 only, so on an arm64
 # host it runs under emulation (Rosetta 2 in Docker Desktop on Apple
@@ -35,7 +36,7 @@ rm -f "$dir/results.json" "$dir/expected.json"
 log=$(mktemp)
 pid=
 trap 'if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi; rm -f "$log"' EXIT
-WORKERS=${WORKERS:-2} H2C_PORT=0 "$root/build/server" http "$port" >"$log" 2>&1 &
+WORKERS=${WORKERS:-2} H2C_PORT=0 WS_LIMIT=16777216 "$root/build/server" http "$port" >"$log" 2>&1 &
 pid=$!
 tries=0
 until grep -q "on port $port" "$log"; do

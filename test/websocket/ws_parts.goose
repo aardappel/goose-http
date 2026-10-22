@@ -1,5 +1,6 @@
 // WebSocket's parts (websocket.goose), as a framework composes them: ws_check's
-// verdicts without an answer, a refusal in a program's own shape, ws_switch's
+// verdicts without an answer, a refusal in a program's own shape, ws_admit's
+// promise and the program's own 503 where the budget can't hold it, ws_switch's
 // 101 against ws_upgrade's, and ws_take driven with bytes alone against
 // ws_read driven with events, with ws_release for what a connection holds.
 import std;
@@ -35,14 +36,20 @@ fn respond_with<F>(minor: i32 = 1) -> u8[>..] {
     return t;
 }
 
-// A framework's answer: ws_check's refusal with a JSON body of its own, or
-// ws_switch's 101.
-fn framework(req: const http::Request&, out: http::Reply) {
+// A framework's answer: ws_check's refusal with a JSON body of its own, a
+// 503 of its own where ws_admit can't promise ws its bytes, or ws_switch's
+// 101.
+fn framework(req: const http::Request&, ws: http::WebSocket&, out: http::Reply) {
     let status, key, fields = http::ws_check(req, out.minor);
     guard status == 101 else {
         http::start(out, status);
         out.buf.append(fields);
         http::finish(out, http::JSON, "{\"error\":\"no_websocket\"}");
+        return;
+    }
+    guard http::ws_admit(ws) else {
+        http::start(out, 503);
+        http::finish(out, http::JSON, "{\"error\":\"busy\"}");
         return;
     }
     http::ws_switch(out, key, "chat");
@@ -78,6 +85,7 @@ fn echo(data: const u8[:], step: i64, bytes: bool, limit: i64 = 1 << 20) -> u8[>
     let reply = http::Reply { buf: out, common: "", keep_alive: keep, minor: 1, head: false, stream: stream };
     http::switched(reply);
     var ws = http::WebSocket { limit: limit, .. };
+    assert(http::ws_admit(ws));
     let none = http::Request { .. };
     var at = 0;
     while at < data.len {
@@ -93,7 +101,7 @@ fn echo(data: const u8[:], step: i64, bytes: bool, limit: i64 = 1 << 20) -> u8[>
         }
         at = to;
     }
-    let held = ws.pending.cap + ws.message.cap;
+    let held = ws.held.cap;
     let open = stream.open && keep;
     if bytes {
         http::ws_release(ws);
@@ -101,7 +109,7 @@ fn echo(data: const u8[:], step: i64, bytes: bool, limit: i64 = 1 << 20) -> u8[>
         http::ws_read(http::Event { kind: http::CLOSED, req: none, data: "", whole: false, trailers: "" }, ws,
                       reply) { op, msg, o => http::ws_send(o, op, msg); };
     }
-    assert(ws.pending.cap == 0 && ws.message.cap == 0);
+    assert(ws.held.cap == 0 && http::gather_promised == 0);
     var t: u8[>..] = [];
     format(t, out.len, " bytes back, ", if open { "open" } else { "closed" }, ", ",
            if held > 0 { "a run held" } else { "nothing held" });
@@ -130,7 +138,9 @@ fn main() {
     // ws_switch writes ws_upgrade's 101, byte for byte.
     var buf: u8[>..] = [];
     let ok = check::request("GET", str(ASK, KEY, V13, "Sec-WebSocket-Protocol: chat\r\n"), buf);
-    let upgraded = respond_with() { out => http::ws_upgrade(ok, out, "chat"); };
+    var ws = http::WebSocket { .. };
+    let upgraded = respond_with() { out => http::ws_upgrade(ok, ws, out, "chat"); };
+    http::ws_release(ws);
     let switched = respond_with() { out =>
         let status, key, fields = http::ws_check(ok, out.minor);
         assert(status == 101 && fields.len == 0);
@@ -142,8 +152,14 @@ fn main() {
     // A refusal in the program's own shape, and the 101 from the same code.
     var buf2: u8[>..] = [];
     let plain = check::request("GET", "", buf2);
-    print(respond_with() { out => framework(plain, out); });
-    print(respond_with() { out => framework(ok, out); });
+    print(respond_with() { out => framework(plain, ws, out); });
+    print(respond_with() { out => framework(ok, ws, out); });
+    http::gather_budget(0);
+    var refused = http::WebSocket { .. };
+    print(respond_with() { out => framework(ok, refused, out); });
+    http::gather_budget(http::GATHER_BUDGET);
+    http::ws_release(ws);
+    assert(http::gather_promised == 0);
 
     // ws_take from bytes alone sends what ws_read sends from events.
     var b: u8[>..] = [];

@@ -114,6 +114,9 @@ fn serve_http<TLS, WORKERS>(given: http::Config, default_loop: const u8[:]) {
     if !starts_with(cfg.address, "unix:") { TLS(cfg, also); }
     let n = http::worker_count(cfg);
     load_dataset();
+    // WS_LIMIT is /ws's longest message, which each connection is promised
+    // of its worker's gather budget at its upgrade; Autobahn's tests set it.
+    spare.limit = positive("WS_LIMIT", spare.limit);
     // The backend lane of /later and /events, one thread that serves every worker.
     if cfg.mail_slots > 0 {
         backend_lane = http::lane_open(http::LaneConfig { slots: 256, size: JOB_SIZE, .. }, 4096, backend);

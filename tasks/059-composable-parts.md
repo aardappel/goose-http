@@ -1,6 +1,6 @@
 # 059: Composable parts
 
-Status: in-progress (asked for 2026-10-22), on the branch `composable`.
+Status: in-progress (asked for 2026-10-22); item 4 on the branch `gather-pool`.
 
 Every convenience is a composition of public parts
 ([decision](../docs/decisions.md#every-convenience-is-a-composition-of-public-parts)):
@@ -40,12 +40,13 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
    the comparison rather than compose it. Decided (2026-10-22): neither. The verdict
    is one comparison of numbers a framework holds, as goose-rest's `arrived` already
    makes it, too small to be a part.
-4. [ ] **`gather(ev, g, out, limit)` and its pool.** It takes an `Event`, writes 413
+4. [x] **`gather(ev, g, out, limit)` and its pool.** It takes an `Event`, writes 413
    and 500 itself, and fills the worker's pool `gathered` through `gather_head`,
-   `gather_piece`, and `release_gather`, which `docs/api.md` doesn't list. goose-rest
+   `gather_piece`, and `release_gather`, which `docs/api.md` didn't list. goose-rest
    rebuilt gathering in a spill of its own, with a budget, so a goose-rest program's
    gathered bodies, and its WebSocket's runs once it has WebSocket, live in two arenas.
-   Design below ([The gather pool](#the-gather-pool)); no code in this branch.
+   Done (2026-10-22): the pool's parts are public, under a budget that counts bytes
+   promised and refuses at admission ([The gather pool](#the-gather-pool)).
 5. [ ] **`otherwise(r, out)` decides among 501, 400, 204, 405, and 404 and writes
    them.** goose-rest rebuilt the decision to answer in its own shape (its
    `runtime.goose`, `otherwise` and `no_route`). Change: `unrouted(r) -> i32`, the
@@ -165,16 +166,18 @@ Checked on macOS, at Goose v2026.3:
 
 ## The gather pool
 
-Item 4, a design for the maintainer; nothing here is built.
+Item 4, built on the branch `gather-pool` (2026-10-22), as the
+[decision](../docs/decisions.md#the-gather-budget-counts-bytes-promised-and-refuses-at-admission)
+records.
 
-### What each side has now
+### What each side had
 
-`http::gather` keeps a body that didn't come with its head in a run of `gathered`, a
+`http::gather` kept a body that didn't come with its head in a run of `gathered`, a
 `reusable[]` global and so each worker's own, which only a program that calls `gather`
-or `http.websocket` has. A run starts at 16 KB, or the first piece, and doubles as the
-body grows; a body past `limit` gets 413. Nothing bounds the pool as a whole: a worker
-can hold `max_conns` bodies of `limit` bytes. WebSocket keeps a frame not yet whole and
-a fragmented message in runs of the same pool.
+or `http.websocket` has. A run started at 16 KB, or the first piece, and doubled as the
+body grew; a body past `limit` got 413. Nothing bounded the pool as a whole: a worker
+could hold `max_conns` bodies of `limit` bytes. WebSocket kept a frame not yet whole and
+a fragmented message in two runs of the same pool, unbounded but by `WebSocket.limit`.
 
 goose-rest keeps its own `reusable[]` spill, a local of each worker's `rest::serve`, for
 three kinds of run (its `runtime.goose`):
@@ -196,88 +199,87 @@ at the head for a Content-Length, or a reply 502. To know whether a run fits, th
 first free span in index order (`track`, `untrack`, `spill_end`, `free_at`,
 `grown_end`, `grow_run`): a scan of the runs in use for each run placed.
 
-### Proposal
+### What was built
 
-Make the pool's runs a public part, with an optional budget inside the pool, and keep
-`gather` and `Gather` as the convenience over them. goose-rest's three kinds of run
-then go in `gathered`, and it drops its spill and the functions above.
+The pool's runs are public parts under a budget that is always there, and `gather` and
+`ws_upgrade` are compositions of them. A run is an `http::Gather`, which gained `most`,
+the bytes promised it; its bytes are `http::gathered[g.at..g.at + g.len]`.
 
 ```rust
-// Each worker's, before its loop: the most bytes the pool may reach; 0, the default, for none.
-fn gather_budget(bytes: i64)
-// A run of exactly n bytes; with checked, nothing and false where it would pass the budget.
-fn gather_run(n: i64, checked: bool = false) -> i64, i64, bool          // at, cap, ok
-// The run at, of cap bytes, made to hold n: as it is, doubled, or exactly n where doubling
-// would pass the budget; with checked, unchanged and false where n would.
-fn gather_grow(at: i64, cap: i64, n: i64, checked: bool = false) -> i64, i64, bool
-fn gather_free(at: i64, cap: i64)
+let GATHER_BUDGET: i64 = 64 << 20;
+fn gather_budget(bytes: i64)                                // the worker's; main's is copied at spawn
+fn gather_promise(g: Gather&, most: i64) -> bool            // false: nothing promised
+fn gather_piece(g: Gather&, data: const u8[:]) -> bool      // false: past g.most, nothing appended
+fn gather_clear(g: Gather&)                                 // frees the run, keeps the promise
+fn release_gather(g: Gather&)                               // frees both
+fn gather_head(g: Gather&, req: const Request&, limit: i64) -> bool
+fn ws_admit(ws: WebSocket&) -> bool                         // ws.limit + WS_SLACK (131)
+fn ws_upgrade(req: const Request&, ws: WebSocket&, out: Reply, protocol: const u8[:] = "") -> bool
 ```
 
-The bytes are `http::gathered[at..at + n]`, as `ws_take` reads them now. `Gather`'s
-functions, `gather_head`, `gather_piece`, and `release_gather`, become compositions of
-these, and `gather_head` reserves a Content-Length body's exact run at the head when a
-budget is set. `gather` answers a refusal 503 with `Retry-After: 1` and closes, as
-goose-rest does; a framework calls the parts and answers in its own shape.
+- `gather_head` promises the rebuilt head and the body, a Content-Length's exact size
+  in a run placed whole at the head, or a chunked body's `limit`. `gather` answers a
+  refusal 503 with `Retry-After: 1` and closes; its 413 for a chunked body past
+  `limit` is now `gather_piece`'s false, since the promise is the limit.
+- A WebSocket holds one run, `WebSocket.held`: the message so far, its first `joined`
+  bytes, then a frame not yet whole. That frame takes from the next bytes only what it
+  lacks (`ws_length`), where the pending run took a whole read before, and a fragment's
+  payload, unmasked already, takes the frame's place (`ws_join`). So the run never
+  holds more than the limit and 131 bytes, the promise `ws_admit` makes at the
+  upgrade. `ws_upgrade` refuses with 503 and `Retry-After: 1` where it can't, and keeps
+  the connection. `WebSocket.limit`'s default is 64 KiB, from 1 MiB.
+- The benchmark server keeps a spare `WebSocket` that `ws_upgrade` admits, which
+  `open_socket` moves into `sockets`, with `WS_LIMIT` for its limit: 64 KiB by default,
+  for HttpArena's 5-byte frames, and 16 MiB in `scripts/test-autobahn.sh`, the longest
+  message Autobahn sends. `http_client.py`'s WebSocket check sends 60 KiB in fragments,
+  where it sent 3 MiB, and a frame past the limit, which gets 1009.
 
-- **The budget bounds the pool's length**, as goose-rest's does, since that is what the
-  worker keeps. The pool mirrors its runs, as `Budget.runs` does, only while a budget
-  is set: a program that gathers without one pays a branch per run placed or freed.
-- **The budget is a promise: no run is placed past it unchecked.** Under a budget
-  every run is checked, and a run that doesn't fit is refused where a refusal has an
-  answer: a body at its head (503), a collected reply (502), a middleware's kept
-  fields at the request that keeps them (503), and WebSocket at its upgrade (open
-  question 5). A budget that counted some runs without refusing them could be passed,
-  and the worker would keep the higher length for its life (review, 2026-10-22).
-- **The parts take a run's place, `at` and `cap`, not a `Gather`**, so a framework
-  stores a run in as few bytes as it likes, as goose-rest does for a reply.
+goose-rest can then keep its three kinds of run in `gathered`: a body in an
+`http::Gather` from `http::gather_head`, refused at `rest::body` where it returns
+false; a kept run from `gather_promise` and `gather_piece`; and a collected reply in a
+`Gather` promised its most when the route asks. It drops its spill, `Budget`, `Run`,
+`track`, `untrack`, `spill_end`, `free_at`, `grown_end`, `grow_run`, `placed_end`,
+`fits`, `run_size`, and its own `gather_head`, `gather_piece`, and `release`, and sets
+`rest::Config.gather_budget` with `http::gather_budget`. A chunked body is then refused
+at `rest::body`, not once it grows past the budget, and a reply needs a most bytes to
+promise, which `rest::ask` doesn't take yet.
 
-Who gains:
+### The open questions, answered
 
-- goose-rest: one arena per worker, one high-water mark, and one budget, its
-  WebSocket's runs included once it has WebSocket. The functions above and its
-  `gather_head`, `gather_piece`, and `run_size` are about 100 lines, with comments.
-- Programs that call `http::gather`: a Content-Length body's run stops at its length,
-  where today a 520 KB body doubles to a 1 MB run; under a budget it is reserved whole
-  at the head and copied once. And an optional budget bounds what gathered bodies and
-  WebSocket's runs may take of a worker, which today only `max_conns` times `limit`
-  bounds.
-- Programs that never call `gather` or `http.websocket`: nothing changes. Goose
-  compiles a function only where it's called, and the globals only those functions
-  use, `gathered`, the budget, and its mirror, aren't in the program.
+1. **Bound the length, or the bytes promised?** The bytes promised: a promise of
+   growth can't be checked against a length until the growth is placed, so a length
+   budget refuses a chunked body or a WebSocket message partway, and needs the mirror.
+   The length can pass the budget by what fragmentation leaves free; that is the
+   trade-off the decision records.
+2. **Goose placement or free spans.** Not needed: no mirror is left. Only a bound on
+   the length would need it, which the decision names and no one asks for yet.
+3. **Where the budget is set.** `gather_budget(bytes)`, per worker; main's value is
+   each worker's at spawn, since a worker copies main's globals.
+4. **Exact runs at the head.** Always, since a budget always is: the budget bounds what
+   `max_conns` heads can make the worker zero-fill.
+5. **WebSocket's runs.** Admitted at the upgrade, the promise held for the
+   connection's life, one run of the limit and 131 bytes.
+6. **The convenience's refusal.** 503 with `Retry-After: 1`, and for a body a close,
+   since the rest would be drained under memory pressure; an upgrade has no body, so
+   its connection stays.
+7. **The loops' own spill** stays apart.
 
-### Open questions
+Checked on macOS, at Goose v2026.3:
 
-1. **Bound the length, or the bytes in use?** The bytes in use need one counter, with
-   no mirror and no scan, but fragmentation can take the length past the budget. The
-   length is what memory follows, and goose-rest chose it. Recommended: the length.
-2. **Could Goose tell where a slice pool would place a run**, or expose its free
-   spans? Either removes the mirror and its scan. A feature request for
-   `docs/goose-findings.md`, if the maintainer wants one.
-3. **Where the budget is set.** `gather_budget(bytes)` in each worker before its
-   loop, since a worker's globals are its own, rather than a `Config` field read by
-   code the loop doesn't call (the rule against shared fields for one feature), or a
-   budget passed to each call, as goose-rest's `Budget&` is now. Recommended: the
-   function.
-4. **Exact runs at the head without a budget.** A head alone would make the worker
-   reserve, and Goose fill with zeros, a whole announced body: `max_conns` heads could
-   reserve `max_conns` times `limit`. Recommended: exact runs at the head only under a
-   budget; without one, growth that doubles but stops at the announced length.
-5. **How WebSocket's runs keep the promise.** `WebSocket.limit` bounds them per
-   connection. Either the upgrade is admitted only when the budget can hold the
-   connection's limit, held for the connection's life, so a frame never fails and a
-   full worker refuses the upgrade with 503; or each run is checked as a frame needs
-   it, and one that doesn't fit closes the connection with 1011. Recommended: the
-   first, the bound settled where a refusal costs the client least, as Tina reserves
-   an Isolate's memory when it's spawned. Open: whether a reservation that counts
-   bytes promised sits with a budget on the pool's length, or the budget then
-   counts both.
-6. **The convenience's refusal.** 503 with `Retry-After: 1` and a close, as goose-rest
-   answers, or a 503 that keeps the connection while the rest is under
-   `Config.max_drain`.
-7. **The loops' own spill stays apart.** The epoll and io_uring loops keep a
-   connection's held bytes and queued output in a `reusable[]` local of the loop,
-   which a handler can't reach without a field in `Reply`. Recommended: keep it apart;
-   the pool is for what handlers hold.
+- The golden files of `ws_frames` and `body_limits` are unchanged, so the frames a
+  connection sends back, split across reads every way the test splits them, and
+  `gather`'s answers are byte for byte what they were. `ws_frames` asserts the run
+  never passes its promise after each read, and that `CLOSED` gives the promise back.
+  `test/api/gather_pool.goose` adds the parts, `gather_head`'s runs, and `gather`'s
+  503 at the head; `ws_handshake` the upgrade's 503 and the promise each 101 holds;
+  `ws_parts` a framework's own 503 from `ws_admit`.
+- The C that Goose generates for `examples/hello/` and `bench/rest/goose/rest.goose`,
+  which don't gather, differs only in three numbers in main's globals and their
+  initialization, which no worker copies.
+- On the benchmark server, built with gcc for arm64 Linux in Docker and counted with
+  valgrind over 100,000 plaintext requests, a request costs 1,543.9 instructions
+  before and after. Written in `handle` rather than in `upgrade_ws`, the upgrade's new
+  call cost 12 more.
 
 ## Acceptance criteria
 
@@ -288,6 +290,9 @@ Who gains:
       unchanged byte for byte, and the request path's generated code unchanged
 - [x] Item 3 done, or the reason it waits recorded here
 - [x] Item 4's design, with its open questions
+- [x] Item 4 built: the pool's parts under a budget of bytes promised, with tests under
+      `test/api/` and `test/websocket/`, `docs/api.md`, `docs/architecture.md`, and the
+      decision; the plaintext path's executed instructions unchanged
 - [x] `scripts/test.sh` passes on macOS: with `AUTOBAHN=1`, on an M1 Pro, macOS 26.3,
       2026-10-22, each loop's Autobahn run 296 OK, 2 NON-STRICT, and 3 INFORMATIONAL,
       as task 054 recorded

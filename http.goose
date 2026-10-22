@@ -800,14 +800,96 @@ fn body_within(taken: i64&, ev: Event, out: Reply, limit: i64) -> bool {
     return false;
 }
 
-// A body that didn't come with its head, gathered whole for gather: a run of
-// gathered from at, of cap bytes, whose first len hold the head, rebuilt,
-// and then the body so far. len is 0 while nothing is gathered.
-struct Gather { at: i64 = 0, cap: i64 = 0, len: i64 = 0, head: i64 = 0 }
+// A run of the worker's pool, gathered, and the bytes promised it: its
+// bytes are gathered[at..at + len], in a run of cap bytes, which never grows
+// past most. For gather, its first head bytes are the request's head,
+// rebuilt, and then come the body's so far. len is 0 while nothing is
+// gathered, and most 0 until gather_promise.
+struct Gather { at: i64 = 0, cap: i64 = 0, len: i64 = 0, head: i64 = 0, most: i64 = 0 }
 
-// Each worker's gathered bodies, a run for each Gather. A worker's globals
-// are its own (spec §11.2), and a program that never calls gather has none.
+// Each worker's pool, a run for each Gather. A worker's globals are its own
+// (spec §11.2), and the workers of a program that never gathers have none.
 reusable[] var gathered: u8[>..] = [];
+
+// The most bytes a worker's pool may promise its runs at once, unless
+// gather_budget says otherwise.
+let GATHER_BUDGET: i64 = 64 << 20;
+
+// The worker's budget, and the bytes of it promised.
+var gather_most: i64 = GATHER_BUDGET;
+var gather_promised: i64 = 0;
+
+// Sets the most bytes this worker's pool may promise its runs at once. A
+// worker copies main's globals at spawn, so main sets it for every worker
+// before run, or a worker for itself before its loop.
+fn gather_budget(bytes: i64) { gather_most = bytes; }
+
+// Promises g up to most bytes of the worker's pool and returns true, or
+// returns false, promising nothing, when the budget can't hold them beside
+// what it has promised. g holds no promise yet.
+fn gather_promise(g: Gather&, most: i64) -> bool {
+    guard gather_promised + most <= gather_most else { return false; }
+    gather_promised += most;
+    g.most = most;
+    return true;
+}
+
+// Appends data to g's run, which starts at 16 KB and doubles as it fills,
+// up to g.most. Returns false, appending nothing, where data would take g
+// past g.most.
+fn gather_piece(g: Gather&, data: const u8[:]) -> bool {
+    let n = g.len + data.len;
+    guard n <= g.most else { return false; }
+    if n > g.cap {
+        let cap = min(max(max(n, g.cap * 2), 16384), g.most);
+        let run = gathered.realloc_slice(gathered[g.at..g.at + g.cap], cap);
+        g.at = gathered.index_of(run[0]);
+        g.cap = cap;
+    }
+    copy_into(gathered[g.at + g.len..g.at + n], data);
+    g.len = n;
+    return true;
+}
+
+// Frees g's run and keeps its promise, for a run that fills again.
+fn gather_clear(g: Gather&) {
+    if g.cap > 0 { gathered.free_slice(gathered[g.at..g.at + g.cap]); }
+    g = Gather { most: g.most, .. };
+}
+
+// Frees g's run and gives back its promise.
+fn release_gather(g: Gather&) {
+    gather_promised -= g.most;
+    if g.cap > 0 { gathered.free_slice(gathered[g.at..g.at + g.cap]); }
+    g = Gather { .. };
+}
+
+// Promises g req's head, rebuilt, and its body, and copies the head in,
+// whose bytes the read buffer holds only until the handler returns. A body
+// with a Content-Length, which the caller has checked against its limit,
+// gets a run of the head and the body's exact size, placed now, which never
+// grows or moves; a chunked one is promised limit bytes, and its run grows
+// as gather_piece grows it. Returns false, promising nothing, when the
+// worker's budget can't hold them.
+fn gather_head(g: Gather&, req: const Request&, limit: i64) -> bool {
+    var version: u8[..16] = [];
+    format(version, " HTTP/1.", req.minor, "\r\n");
+    let head = req.method.len + 1 + req.target.len + version.len + req.fields.len + 2;
+    guard gather_promise(g, head + (if req.chunked { limit } else { req.body })) else { return false; }
+    if !req.chunked {
+        let run = gathered.alloc_slice(g.most);
+        g.at = gathered.index_of(run[0]);
+        g.cap = g.most;
+    }
+    gather_piece(g, req.method);
+    gather_piece(g, " ");
+    gather_piece(g, req.target);
+    gather_piece(g, version);
+    gather_piece(g, req.fields);
+    gather_piece(g, "\r\n");
+    g.head = g.len;
+    return true;
+}
 
 // The handler of serve(cfg, fresh) or serve_epoll(cfg, fresh) on an Event,
 // ahead of H, for bodies of any size up to limit: calls H(req, body, out)
@@ -816,7 +898,9 @@ reusable[] var gathered: u8[>..] = [];
 // H at END, with the head parsed again from a copy, as the read buffer is
 // reused. g, in the request's state, holds the gathered bytes, which END and
 // CLOSED give back. Past limit, at most Config.max_body, answers 413 and
-// closes, as body_within does. H can't keep req or body past its call.
+// closes, as body_within does. A body the worker's budget can't promise its
+// bytes gets 503 with Retry-After at its head (gather_head), and the
+// connection closes. H can't keep req or body past its call.
 //
 //   http::serve(cfg, St { .. }) { ev, st, out =>
 //       http::gather(ev, st.body, out, 1 << 24) { req, body, o => ... };
@@ -828,17 +912,17 @@ inline fn gather<H>(ev: Event, g: Gather&, out: Reply, limit: i64) {
             too_large(out);
         } else if ev.whole {
             H(ev.req, ev.data, out);
-        } else {
-            gather_head(g, ev.req);
+        } else if !gather_head(g, ev.req, limit) {
+            out.keep_alive = false;
+            start(out, 503);
+            finish(out, "Retry-After: 1\r\nContent-Length: ", "");
         }
     } else if g.len == 0 {
         // Nothing gathered: answered at REQUEST, or past the limit.
     } else if ev.kind == BODY {
-        if g.len - g.head + ev.data.len > limit {
+        if !gather_piece(g, ev.data) {
             release_gather(g);
             too_large(out);
-        } else {
-            gather_piece(g, ev.data);
         }
     } else if ev.kind == END {
         // Limits of the head's own size take back what parse took at REQUEST.
@@ -859,36 +943,4 @@ fn too_large(out: Reply) {
     out.keep_alive = false;
     start(out, 413);
     finish(out, NO_TYPE, "");
-}
-
-// Starts g's run with req's head, whose bytes the read buffer holds only
-// until the handler returns.
-fn gather_head(g: Gather&, req: const Request&) {
-    var version: u8[..16] = [];
-    format(version, " HTTP/1.", req.minor, "\r\n");
-    gather_piece(g, req.method);
-    gather_piece(g, " ");
-    gather_piece(g, req.target);
-    gather_piece(g, version);
-    gather_piece(g, req.fields);
-    gather_piece(g, "\r\n");
-    g.head = g.len;
-}
-
-// Appends data to g's run, growing it.
-fn gather_piece(g: Gather&, data: const u8[:]) {
-    let n = g.len + data.len;
-    if n > g.cap {
-        let cap = max(max(n, g.cap * 2), 16384);
-        let run = gathered.realloc_slice(gathered[g.at..g.at + g.cap], cap);
-        g.at = gathered.index_of(run[0]);
-        g.cap = cap;
-    }
-    copy_into(gathered[g.at + g.len..g.at + n], data);
-    g.len = n;
-}
-
-fn release_gather(g: Gather&) {
-    if g.cap > 0 { gathered.free_slice(gathered[g.at..g.at + g.cap]); }
-    g = Gather { .. };
 }

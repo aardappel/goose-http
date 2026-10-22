@@ -24,8 +24,9 @@ Pick by how large a route's bodies get:
   read buffer's size.
 - **Larger, and needed whole**, as a large JSON document: wrap the handler in
   `http::gather` with a limit. It calls your code once, with the whole body. The worker
-  holds each body it gathers in memory until your code returns, so set the limit to
-  what it can hold for every connection gathering at once. Shown in
+  holds each body it gathers in memory until your code returns, within its gather
+  budget, 64 MiB unless `http::gather_budget` sets another: a body that doesn't fit
+  beside those it holds gets 503 with `Retry-After` at its head. Shown in
   [`upload/`'s `/words`](../examples/upload/upload.goose).
 
   ```rust

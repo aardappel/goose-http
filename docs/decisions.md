@@ -687,6 +687,63 @@ which grows every composite and still hides its parts; and hooks a framework reg
 with the package, which Goose's function values, which can't be stored (spec §7.6),
 don't allow.
 
+## The gather budget counts bytes promised, and refuses at admission
+
+Decided 2026-10-22, task 059. Replaces, of [WebSocket is an optional module over
+upgrade](#websocket-is-an-optional-module-over-upgrade), `ws_upgrade(req, out)` taking
+no state, and runs that nothing bounded.
+
+What a handler holds past its call, a gathered body and a WebSocket's frames not yet
+read, is in runs of each worker's pool, `http::gathered`, under a budget: the most
+bytes the pool may promise its runs at once, 64 MiB per worker unless
+`http::gather_budget` sets another. There is always a budget, and every run is under
+it. A budget is a promise: a run is promised the most bytes it may ever take when it
+is admitted, and refused there, where a refusal has an answer. It never grows past
+that promise, so nothing admitted fails for lack of room later.
+
+- **A body is admitted at its head.** `http::gather_head` promises the rebuilt head and
+  the body: a Content-Length's exact size, in a run placed whole then, which never grows
+  or moves; or a chunked body's limit, in a run that doubles from 16 KB as it fills, up
+  to that. A body the budget can't hold gets 503 with `Retry-After: 1` from `gather`,
+  and the connection closes rather than drain the body under memory pressure.
+- **A WebSocket is admitted at its upgrade.** `http::ws_admit` promises its limit and
+  131 bytes: a message nearly at the limit and a control frame not yet whole after it,
+  in one run, since a frame not yet whole takes only the bytes it lacks. A connection
+  that doesn't fit gets 503 with `Retry-After: 1` from `ws_upgrade`, and the connection
+  stays open, as no body follows. `WebSocket.limit`'s default went from 1 MiB to
+  64 KiB, so the default budget admits about a thousand connections per worker rather
+  than 63.
+- **The parts are public**: `gather_budget`, `gather_promise`, `gather_piece`,
+  `gather_clear`, `release_gather`, `gather_head`, and `ws_admit`. A framework answers a
+  refusal in its own shape and keeps its own runs in the same pool, under the same
+  budget.
+- **The budget is per worker, set by a function**, `gather_budget(bytes)`, in `main`
+  before `run`, which each worker copies at spawn, or in a worker before its loop. A
+  `Config` field would be read by code the loop doesn't call, and a budget passed to
+  each call, as goose-rest's `Budget&` is now, is the program's to thread through.
+- **A program that never gathers has no pool.** Its workers' globals don't copy it,
+  and nothing on the request path reads it. Main's globals still hold the pool's empty
+  header and the budget's three numbers, as Goose initializes every module's globals
+  there.
+- **The loops' own spill stays apart.** A connection's held bytes and queued output are
+  the loop's, which a handler can't reach without a field in `Reply`.
+
+The trade-off: the budget bounds the bytes the runs are promised, not the pool's
+length, which the worker keeps for its life. A freed run leaves a gap that a larger
+run can't use, so the length can pass the budget by what fragmentation leaves free.
+
+Rejected: a budget on the pool's length, as goose-rest's `Budget` is. A length can be
+checked only when a run is placed, so it can't hold a promise of growth not yet
+placed: a chunked body or a WebSocket's message would be refused partway, after the
+client had sent part of it. And it needs a mirror of the runs in use that predicts
+where `alloc_slice` puts the next one (spec §5.4), a scan of every run for each run
+placed, which repeats the pool's own hidden search. Counting both the length and the
+promises needs the mirror still. Also rejected: a count of the bytes in use, which
+grants a growth when it comes and so refuses it then; and a budget of 0 for none, which
+leaves a program's runs bounded only by `Config.max_conns` times its limits. A Goose
+slice pool that reported its free spans, or allocated within a bound and failed
+otherwise, would let the length be bounded too.
+
 ## Not yet decided
 
 ### Compression in an optional module

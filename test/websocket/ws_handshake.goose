@@ -20,8 +20,14 @@ fn answer(method: const u8[:], fields: const u8[:], protocol: const u8[:] = "", 
     var out: u8[>..] = [];
     let reply = http::Reply { buf: out, common: check::COMMON, keep_alive: keep, minor: minor, head: false,
                               stream: stream };
-    let ok = http::ws_upgrade(r, reply, protocol);
+    var ws = http::WebSocket { .. };
+    let before = http::gather_promised;
+    let ok = http::ws_upgrade(r, ws, reply, protocol);
     assert(ok == (stream.framing == http::Framing.Raw && stream.open));
+    // Only a 101 holds a promise, which ws_release gives back.
+    assert(http::gather_promised - before == (if ok { ws.limit + http::WS_SLACK } else { 0 }));
+    http::ws_release(ws);
+    assert(http::gather_promised == before);
     var t: u8[>..] = [];
     t.append(out);
     format(t, "(switched: ", ok, ")\n");
@@ -50,4 +56,16 @@ fn main() {
     print(answer("GET", str(ASK, KEY, V13), "chat\r\nX: y"));
     // An HTTP/2 stream has no upgrade.
     print(answer("GET", str(ASK, KEY, V13), "", http::H2_MINOR));
+    // A worker whose budget can't promise a connection its limit refuses
+    // the upgrade at once, and takes the next once a connection's promise is
+    // given back.
+    let fresh = http::WebSocket { .. };
+    let need = fresh.limit + http::WS_SLACK;
+    http::gather_budget(need + need / 2);
+    var held = http::Gather { .. };
+    assert(http::gather_promise(held, need));
+    print(answer("GET", str(ASK, KEY, V13)));
+    http::release_gather(held);
+    assert(starts_with(answer("GET", str(ASK, KEY, V13)), "HTTP/1.1 101 "));
+    http::gather_budget(http::GATHER_BUDGET);
 }

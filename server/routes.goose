@@ -237,10 +237,7 @@ inline fn route_rest(req: http::Request, path: const u8[:], get: bool, body: con
             http::finish(out, http::NO_TYPE, "");
         }
     } else if ws {
-        if http::ws_upgrade(req, out) {
-            st.route = WS;
-            st.ws = open_socket();
-        }
+        upgrade_ws(req, st, out);
     } else if get && path == "/client" {
         client(req, out);
     } else if get && (path == "/later" || path == "/events") {
@@ -374,17 +371,32 @@ fn echo_frames(ev: http::Event, st: Transfer&, out: http::Reply) {
     }
 }
 
-// A fresh WebSocket for an upgraded connection, and its index in sockets.
-// Autobahn's test suite sends messages of up to 16 MiB.
+// /ws's upgrade. A function, not in handle: written there, it cost each
+// plaintext request 12 instructions (gcc on arm64, counted with valgrind).
+fn upgrade_ws(req: const http::Request&, st: Transfer&, out: http::Reply) {
+    guard http::ws_upgrade(req, spare, out) else { return; }
+    st.route = WS;
+    st.ws = open_socket();
+}
+
+// The WebSocket the next /ws upgrade is admitted into (ws_upgrade), which
+// open_socket then moves into sockets. app.goose sets its limit from
+// WS_LIMIT before it spawns the workers: HttpArena's echo profiles send 5
+// bytes, and Autobahn's test suite up to 16 MiB.
+var spare = http::WebSocket { .. };
+
+// The WebSocket ws_upgrade admitted in spare, moved to sockets, and its index
+// there.
 fn open_socket() -> i64 {
-    let fresh = http::WebSocket { limit: 1 << 25, .. };
+    let taken = spare;
+    spare = http::WebSocket { limit: taken.limit, .. };
     if free_count > 0 {
         free_count--;
         let i = free_sockets[free_count];
-        sockets[i] = fresh;
+        sockets[i] = taken;
         return i;
     }
-    sockets.push(fresh);
+    sockets.push(taken);
     return sockets.len - 1;
 }
 

@@ -10,14 +10,14 @@
 // An echo, with a WebSocket in the handler's state:
 //
 //   if ev.kind == http::REQUEST {
-//       http::ws_upgrade(ev.req, out);   // 101, or 400 or 426
+//       http::ws_upgrade(ev.req, st.ws, out);   // 101, or 400, 426, or 503
 //   } else {
 //       http::ws_read(ev, st.ws, out) { op, data, o => http::ws_send(o, op, data); };
 //   }
 //
-// ws_upgrade is ws_check's verdict and ws_switch's 101, and ws_read is
-// ws_take at BODY and ws_release at CLOSED, for a program that answers a
-// refusal itself or holds the bytes outside an Event.
+// ws_upgrade is ws_check's verdict, ws_admit's promise, and ws_switch's 101,
+// and ws_read is ws_take at BODY and ws_release at CLOSED, for a program
+// that answers a refusal itself or holds the bytes outside an Event.
 //
 // No extension is negotiated, so a frame with an RSV bit set fails the
 // connection, as permessage-deflate's would.
@@ -47,14 +47,17 @@ let WS_TOO_BIG: i32 = 1009;
 let WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 // A connection's WebSocket, in the handler's state from the upgrade on: what
-// it holds of a frame not yet whole, and of a message whose fragments are
-// still coming, both in the worker's pool that gather uses.
+// it holds of a message whose fragments are still coming, and of a frame not
+// yet whole, in a run of the worker's pool that gather uses.
 struct WebSocket {
     // The longest message taken, in bytes, whether in one frame or several;
-    // a longer one closes the connection with 1009.
-    limit: i64 = 1 << 20,
-    pending: Gather = Gather { .. },
-    message: Gather = Gather { .. },
+    // a longer one closes the connection with 1009. ws_admit promises the
+    // pool's bytes for it, so it stays as it is from then on.
+    limit: i64 = 1 << 16,
+    // The message so far, its first joined bytes, and then a frame not yet
+    // whole, if one is.
+    held: Gather = Gather { .. },
+    joined: i64 = 0,
     // The opcode of the message whose fragments are coming, or 0.
     op: u8 = 0,
     // What a text message's UTF-8 so far leaves to check (ws_utf8).
@@ -66,14 +69,19 @@ struct WebSocket {
 }
 
 // Answers a request to open a WebSocket (§4.2) as ws_check judges it: 101
-// from ws_switch, after which the connection carries frames, and true; or
-// the status ws_check gives, with its fields, and false. With protocol, the
-// 101 names it in Sec-WebSocket-Protocol: one of those the client offered in
-// its own Sec-WebSocket-Protocol field, which field_of gives. A protocol
-// that is_field refuses gets 400.
-fn ws_upgrade(req: const Request&, out: Reply, protocol: const u8[:] = "") -> bool {
+// from ws_switch, after which the connection carries frames into ws, and
+// true; or the status ws_check gives, with its fields, and false. With
+// protocol, the 101 names it in Sec-WebSocket-Protocol: one of those the
+// client offered in its own Sec-WebSocket-Protocol field, which field_of
+// gives. A protocol that is_field refuses gets 400, and a connection that
+// ws_admit can't promise its bytes 503 with Retry-After.
+fn ws_upgrade(req: const Request&, ws: WebSocket&, out: Reply, protocol: const u8[:] = "") -> bool {
     var status, key, fields = ws_check(req, out.minor);
     if status == 101 && protocol.len > 0 && !is_field("Sec-WebSocket-Protocol", protocol) { status = 400; }
+    if status == 101 && !ws_admit(ws) {
+        status = 503;
+        fields = "Retry-After: 1\r\n";
+    }
     guard status == 101 else {
         start(out, status);
         out.buf.append(fields);
@@ -154,26 +162,80 @@ fn ws_read<F>(ev: Event, ws: WebSocket&, out: Reply) {
 // gets its pong, and a Close its Close, after which the connection closes. A
 // frame the protocol forbids closes it with 1002, text that isn't UTF-8 with
 // 1007, and a message longer than ws.limit with 1009, each sent in a Close
-// first. What ws holds between calls ws_release gives back.
+// first. What ws holds between calls, within what ws_admit promised it,
+// ws_release gives back.
 fn ws_take<F>(bytes: const u8[:], ws: WebSocket&, out: Reply) {
     guard !ws.done else { return; }
     // The unmasked payload of each frame, on the worker's data stack.
     var payload: u8[>..] = [];
-    guard ws.pending.len > 0 else {
-        let used = ws_frames(bytes, ws, out, payload) { op, data, o => F(op, data, o); };
-        if !ws.done && used < bytes.len { gather_piece(ws.pending, bytes[used..]); }
-        return;
+    var rest = bytes;
+    // A frame not yet whole waits after the message so far, and takes from
+    // bytes only what it lacks, so ws.held never holds more than the message
+    // and one frame.
+    while ws.held.len > ws.joined {
+        let frame = gathered[ws.held.at + ws.joined..ws.held.at + ws.held.len];
+        let want, judged = ws_length(frame);
+        if judged {
+            // ws_frames refuses the frame by its head, reads it, or waits.
+            let used = ws_frames(frame, ws, out, payload) { op, data, o => F(op, data, o); };
+            guard !ws.done else { return; }
+            if used > 0 {
+                ws.held.len = ws.joined;
+                if ws.joined == 0 { gather_clear(ws.held); }
+                break;
+            }
+        }
+        guard rest.len > 0 else { return; }
+        let take = min(want - frame.len, rest.len);
+        guard gather_piece(ws.held, rest[..take]) else {
+            ws_fail(out, ws, WS_TOO_BIG);
+            return;
+        }
+        rest = rest[take..];
     }
-    gather_piece(ws.pending, bytes);
-    let run = gathered[ws.pending.at..ws.pending.at + ws.pending.len];
-    let used = ws_frames(run, ws, out, payload) { op, data, o => F(op, data, o); };
-    guard !ws.done else { return; }
-    if used == run.len {
-        release_gather(ws.pending);
-    } else if used > 0 {
-        copy_into(run[..run.len - used], run[used..]);
-        ws.pending.len -= used;
+    let used = ws_frames(rest, ws, out, payload) { op, data, o => F(op, data, o); };
+    if !ws.done && used < rest.len && !gather_piece(ws.held, rest[used..]) { ws_fail(out, ws, WS_TOO_BIG); }
+}
+
+// The length of the frame that s starts, and whether its head is whole: the
+// head's length until it is, and then the head's, the mask's, and the
+// payload's.
+fn ws_length(s: const u8[:]) -> i64, bool {
+    guard s.len >= 2 else { return 2, false; }
+    let short = (s[1] & 0x7F) as i64;
+    let h: i64 = if short == 126 { 4 } else if short == 127 { 10 } else { 2 };
+    guard s.len >= h else { return h, false; }
+    var n = short;
+    if short == 126 {
+        n = (s[2] as i64) << 8 | s[3];
+    } else if short == 127 {
+        n = 0;
+        for i in 8 { n = n << 8 | s[2 + i]; }
     }
+    return h + 4 + n, true;
+}
+
+// The bytes a WebSocket may hold past its limit: a control frame not yet
+// whole, of 125 bytes with its head and mask, after a message at the limit.
+let WS_SLACK = 131;
+
+// Promises ws the bytes of the worker's pool that its limit lets it hold,
+// limit and WS_SLACK, and returns true, or false where the worker's budget
+// can't hold them (gather_budget). Called before ws_switch: ws_take holds
+// bytes only within the promise, and ws_release gives it back.
+fn ws_admit(ws: WebSocket&) -> bool { return gather_promise(ws.held, ws.limit + WS_SLACK); }
+
+// Adds a fragment's payload to the message at the start of ws.held. A frame
+// after the message there is the one being read, whose payload is unmasked
+// already, so payload takes its place.
+fn ws_join(ws: WebSocket&, payload: const u8[:]) -> bool {
+    if ws.held.len > ws.joined {
+        copy_into(gathered[ws.held.at + ws.joined..ws.held.at + ws.joined + payload.len], payload);
+    } else if !gather_piece(ws.held, payload) {
+        return false;
+    }
+    ws.joined += payload.len;
+    return true;
 }
 
 // Reads the whole frames at the start of src, as ws_take describes, and
@@ -210,7 +272,7 @@ fn ws_frames<F>(src: const u8[:], ws: WebSocket&, out: Reply, payload: u8[>..]&)
             ws_fail(out, ws, WS_PROTOCOL_ERROR);
             break;
         }
-        guard control || n <= ws.limit - ws.message.len else {
+        guard control || n <= ws.limit - ws.joined else {
             ws_fail(out, ws, WS_TOO_BIG);
             break;
         }
@@ -245,14 +307,18 @@ fn ws_frames<F>(src: const u8[:], ws: WebSocket&, out: Reply, payload: u8[>..]&)
                 ws_fail(out, ws, WS_INVALID_DATA);
                 break;
             }
-            gather_piece(ws.message, payload);
+            guard ws_join(ws, payload) else {
+                ws_fail(out, ws, WS_TOO_BIG);
+                break;
+            }
             if fin {
                 guard ws.op != WS_TEXT || ws.utf8 == 0 else {
                     ws_fail(out, ws, WS_INVALID_DATA);
                     break;
                 }
-                F(ws.op, gathered[ws.message.at..ws.message.at + ws.message.len], out);
-                release_gather(ws.message);
+                F(ws.op, gathered[ws.held.at..ws.held.at + ws.joined], out);
+                ws.joined = 0;
+                gather_clear(ws.held);
                 ws.op = 0;
             }
         }
@@ -278,11 +344,12 @@ fn ws_close(out: Reply, ws: WebSocket&, code: i32 = WS_NORMAL, reason: const u8[
     ws.closing = true;
 }
 
-// Gives back what ws holds in the worker's pool: call it at CLOSED, as
-// ws_read does. ws_take does when it closes the connection itself.
+// Gives back what ws holds in the worker's pool, and what ws_admit promised
+// it: call it at CLOSED, as ws_read does. ws_take does when it closes the
+// connection itself.
 fn ws_release(ws: WebSocket&) {
-    release_gather(ws.pending);
-    release_gather(ws.message);
+    release_gather(ws.held);
+    ws.joined = 0;
 }
 
 // One unmasked frame, whole, as a server sends it (§5.2).
