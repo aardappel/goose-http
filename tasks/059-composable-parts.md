@@ -52,32 +52,43 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
    status, with `r.allow` for `Allow`, and `otherwise` its composition with `start`,
    `field`, and `finish`. `otherwise` is inlined into the benchmark server's handler,
    so its generated code must be compared first.
-6. [ ] **`require_type(req, out, want)` and `accept_or_406(req, out, offers)` write
+6. [x] **`require_type(req, out, want)` and `accept_or_406(req, out, offers)` write
    415 and 406.** Their verdicts, `has_type` and `negotiate`, exist, but
    `docs/api.md` doesn't list them, and goose-rest calls `has_type`. Change: list them.
-7. [ ] **`upgrade(out, protocol)` writes 501 itself on an h2 stream.** The verdict is
+   Done (`docs/api.md`, "Parts").
+7. [x] **`upgrade(out, protocol)` writes 501 itself on an h2 stream.** The verdict is
    `out.minor == http::H2_MINOR`, and the switch after a 101 a program writes itself
-   is `switched(out)`; `docs/api.md` lists neither. Change: list them.
+   is `switched(out)`; `docs/api.md` lists neither. Change: list them. Done.
 8. [ ] **`serve_file(req, out, f, content_type, body)` chooses 304, 416, 206, or 200**
    from `not_modified` and `range_of`, which are public, but the entity tag it builds
    isn't, so a program that answers a 304 or 416 itself can't match it. Change:
    `file_tag(f)`, the `ETag` that `serve_file` sends. Low: no framework asks for it.
-9. [ ] **`client(req, out, trusted)` takes a `Reply`** for its socket alone.
+9. [x] **`client(req, out, trusted)` takes a `Reply`** for its socket alone.
    `forwarded_client(req, p, trusted)` takes the peer, but isn't listed. Change: list
-   it.
-10. [ ] **The loops' own refusals** go out in the package's shape, with an empty body:
+   it. Done.
+10. [x] **The loops' own refusals** go out in the package's shape, with an empty body:
     400, 408, 413 past `Config.max_body`, 414, 431, and 500 for a request no handler
     answered, before the handler is called or in its place, and the 413 that `whole`
     writes for a chunked body that didn't come whole. A framework can't give them its
-    error body (goose-rest answers with RFC 9457 problems). No small change exists: an
-    event before each refusal adds a kind and grows `answer`, and Goose can't store a
-    writer the program gives (spec §7.6). Open: whether these refusals need a
-    framework's shape at all, since RFC 9110 asks for no body.
-11. [ ] **Parts a framework already calls that `docs/api.md` doesn't list.** goose-rest
+    error body (goose-rest's is JSON with an error code by default, with RFC 9457
+    problems as a preset). No small change exists: an event before each refusal adds a
+    kind and grows `answer`, and Goose can't store a writer the program gives (spec
+    §7.6). Decided (2026-10-22): they stay as they are. They come before any route,
+    and a client that follows the protocol meets only the 413, which a framework
+    answers in its own shape at its routes' limits, below `Config.max_body`. Other
+    servers send these bodies empty or as plain text too. Should a framework need
+    them, an overload on the program's state type, which the loop's refusal calls,
+    costs nothing, as goose-rest's `rest::error_body` does.
+11. [x] **Parts a framework already calls that `docs/api.md` doesn't list.** goose-rest
     calls `parse`, `refuse`, `status_line`, `write_body`, `known_method`,
     `is_routable`, `same_segment`, `has_type`, and `field_in`, and its test harness
     builds a `Stream` and reads its `Framing`. Change: list them as parts, or name
-    what replaces each, so a change to one is an API change.
+    what replaces each, so a change to one is an API change. Done.
+12. [x] **`TIMEOUT` meant two things**: `later`'s time passed, or no room to wait, so
+    the exchange got it at once. A framework that answers 503 for the second and 504
+    for the first told them apart by the clock (goose-rest's `rest::pause` and
+    `on_event`). Change: the tag `NO_ROOM` on the second. Done, in `timed_out`, which
+    runs per `TIMEOUT`, not per request.
 
 Checked and left as they are:
 

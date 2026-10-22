@@ -171,6 +171,38 @@ call's result to a reference parameter.
   200 for the whole (for example when `If-Range` names another entity tag).
 - `http::content_range(out, start, end, size)`: writes `Content-Range`.
 
+### Parts
+
+The checks and writers the helpers above are made of, for a program or a framework
+that answers in its own shape
+([decision](decisions.md#every-convenience-is-a-composition-of-public-parts)).
+
+- `http::has_type(req, want)`: whether `Content-Type` is `want`, the check
+  `require_type` answers 415 for. `http::negotiate(req, offers)`: the index of the
+  offer `Accept` prefers, or -1, the choice `accept_or_406` answers 406 for.
+- `http::known_method(method)`: whether RFC 9110 defines the method, or it's PATCH;
+  a server answers another with 501. `http::is_routable(path)`: whether a path has no
+  dot-segment and no escaped control byte, which `router` checks.
+  `http::same_segment(lit, seg)`: whether a pattern's literal segment matches a
+  path's, still encoded.
+- `http::field_in(fields, name)`: a field's value in field lines, as trailers or a
+  head kept elsewhere; `field_of` reads the request's.
+- `http::parse(buf, max_head, max_body, max_line, max_fields)`: the request head at
+  the start of `buf`, and 200, `INCOMPLETE`, or the status to refuse it with, as for a
+  head a program kept and reads again.
+- `http::forwarded_client(req, peer, trusted)`: `client` for a peer the program
+  already has.
+- `out.minor == http::H2_MINOR` on an HTTP/2 stream, where `upgrade` answers 501.
+  `http::switched(out)`: switches the stream to an upgraded protocol's bytes, once a
+  101's head the program wrote itself is whole.
+- `http::status_line(status)`: the status line with its CRLF, or "" for a status
+  without a listed reason phrase. `http::write_body(out, fields, body, head_only)`:
+  writes `fields`, which end in `Content-Length: `, the body's length, and the body.
+  `http::refuse(out, status, common)`: the loops' refusal, with no body, after which
+  the connection closes.
+- `http::Stream` and `http::Framing`: a response's state in `out.stream`, which a test
+  harness builds to call a handler without a loop.
+
 ## Bodies and responses of any size
 
 ### Streaming
