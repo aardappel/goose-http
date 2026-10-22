@@ -766,13 +766,13 @@ mark covers the completion that arrived before the cancel. Epoll needs neither: 
 the socket removes it from the poller. epoll and kqueue keep the trap that task 053
 records, a `WAKE` in the exchange's next wait.
 
-An h2 stream's wait can also end in the stream code that every loop shares: a reset, or
-an answer in the call that waited (2026-10-22). That code calls `net_disarm(key)`,
-which only a thread that `ring_bind` bound points at its ring's cancel; elsewhere it
-does nothing. A stream's key has its own generation, so on epoll and kqueue its event
-after the stream ends matches no later stream's wait. The shim's thread-local, which
-`net_arm` already uses, spares the stream code a parameter for one loop's need. Only a
-stream that waits makes the call.
+A wait can also end in the code that every loop shares: an answer in the call that
+waited, over HTTP/1.1 or h2, or an h2 stream's reset or 413 (2026-10-22). That code
+calls `net_disarm(key)`, which only a thread that `ring_bind` bound points at its
+ring's cancel; elsewhere it does nothing. An exchange's key has its own number, and a
+stream's its own generation, so on epoll and kqueue the event after the wait ends
+matches no later wait. The shim's thread-local, which `net_arm` already uses, spares
+that code a parameter for one loop's need. Only an exchange that waits makes the call.
 
 The key takes all 64 bits, more than a ring tag's 62, so the shim keeps it in a record
 and the completion carries the record's index, under the tag `RING_SOCKET`, which no

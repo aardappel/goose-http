@@ -497,10 +497,12 @@ fn answer<S, H, ROOM, C>(c: C&, rbuf: u8[:], rlen: i64, wbuf: u8[>..]&, common: 
     }
 
     // A call that both waited and wrote a whole response, or ended one,
-    // doesn't wait.
+    // doesn't wait. io_uring's poll of a socket wait_socket armed would hold
+    // the socket open after the handler hangs it up.
     fn unwait() {
         x.stream.waiting = false;
         x.stream.rearm = false;
+        net_disarm(x.stream.later.key);
     }
 
     // Calls H for ev on the request in x. Returns whether it wrote anything.

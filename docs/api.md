@@ -629,8 +629,9 @@ http::wait_socket(out, st.s, http::READABLE, 1000);
 - A wait that ends another way, by `TIMEOUT`, by mail, or at `CLOSED`, leaves the
   socket armed on epoll and kqueue: its event can still come as a `WAKE` with
   `SOCKET_READY` in the exchange's next wait, which the handler treats as "try again".
-  io_uring cancels the socket's poll as the wait ends, and as an h2 stream that waits
-  is reset, so no such `WAKE` comes there, and a socket hung up then closes at once.
+  io_uring cancels the socket's poll as the wait ends, as the handler answers in the
+  call that waited, and as an h2 stream that waits is reset or refused, so no such
+  `WAKE` comes there, and a socket hung up then closes at once.
 - `SOCKET_READY` means the socket was ready: by the time the handler reads, it may not
   be, so `recv` and `send` can still give `-EAGAIN`, and the handler waits again. A
   socket closed or failed is readable, and its `recv` gives 0 or `-code`. Keep

@@ -517,10 +517,12 @@ fn h2_answer<S, H, C>(c: C&, slot: i64, h: H2Conn&, streams: H2Stream<S>[>..]&, 
     }
 
     // Answers stream k with a refusal of status, if nothing of its response
-    // went yet.
+    // went yet, which closes the stream: CLOSED first to its handler, if it
+    // was owed a call, as for a reset.
     fn refuse_stream(k: i64, status: i32) {
         let st .= streams[k];
         guard !st.x.answered && !st.x.stream.open && !st.headers_sent else { return; }
+        h2_abandon(st, c.fd, H);
         bout.clear();
         refuse(bout, status, common);
         st.x.answered = true;

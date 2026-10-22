@@ -4,10 +4,11 @@
 // closes, a refused connect, a connect that times out against a full backlog,
 // and a socket hung up at TIMEOUT, which the backend must see closed before
 // it takes the next connection. On io_uring, a socket that becomes readable
-// after its wait timed out doesn't wake the exchange's next wait. Over h2c, a
-// stream reset while it waits, and one whose handler answers in the call that
-// waited, each hang up a socket that the backend must see closed, as at
-// TIMEOUT. On the emulated ring, wait_socket fails with ENOSYS. The loops
+// after its wait timed out doesn't wake the exchange's next wait. A handler
+// that answers in the call that waited, over HTTP/1.1 or h2c, a stream reset
+// while it waits, and one refused 413 for its body while it waits, each hang
+// up a socket that the backend must see closed, as at TIMEOUT. On the
+// emulated ring, wait_socket fails with ENOSYS. The loops
 // listen on Unix sockets in the TMPDIR test/run_tests.py gives each run, so
 // parallel runs share no port.
 import std;
@@ -51,8 +52,9 @@ fn send_text(fd: i32, text: const u8[:]) {
 
 // The backend, blocking, one connection after another, by the first byte
 // each sends: p answers pong to each p, c counts the bytes until the client
-// shuts its side and answers the count, w reads until the client closes and
-// answers nothing, x closes at once, and q ends.
+// shuts its side and answers the count, w reads until the client closes, or
+// for 10 s, so a socket left open fails the next route rather than the run,
+// and answers nothing, x closes at once, and q ends.
 thread_fn backend(lfd: i32) {
     var buf: u8[>..] = [];
     buf.resize(65536, 0);
@@ -78,7 +80,8 @@ thread_fn backend(lfd: i32) {
                 counting = true;
                 count = n;
             } else if cmd == 'w' {
-                while http::net_recv(fd, buf) > 0 {}
+                let until = http::deadline(10000);
+                while http::ready_by(http::Socket { fd: fd }, http::READABLE, until) > 0 && http::net_recv(fd, buf) > 0 {}
                 break;
             }
         }
@@ -100,6 +103,7 @@ let HANGUP: u8 = 4;
 let STALE: u8 = 5;
 let RESET: u8 = 6;
 let ANSWERED: u8 = 7;
+let BIG: u8 = 8;
 
 // A request's state: its backend socket, what it's doing, and what it got.
 struct St {
@@ -125,8 +129,10 @@ fn failed(st: St&, out: http::Reply, e: http::Error) {
     answer(st, out, 502, text);
 }
 
-fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const u8[:]) {
+// kept is the socket /answered leaves to the worker's next request.
+fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const u8[:], kept: http::Socket&) {
     if ev.kind == http::REQUEST {
+        http::hangup(kept);
         let path = http::path_of(ev.req.target);
         var port = ports.backend;
         if path == "/ping" { st.route = PING; }
@@ -136,6 +142,7 @@ fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const
         else if path == "/stale" { st.route = STALE; }
         else if path == "/reset" { st.route = RESET; }
         else if path == "/answered" { st.route = ANSWERED; }
+        else if path == "/big" { st.route = BIG; }
         else if path == "/refused" { st.route = PING; port = ports.refused; }
         else if path == "/timeout" { st.route = PING; port = ports.full; }
         else { http::respond(out, 404, "text/plain", ""); return; }
@@ -184,11 +191,16 @@ fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const
         st.connecting = false;
         if st.route == PING { assert(http::send(st.s, "pp") == 2); }
         if st.route == CLOSES { assert(http::send(st.s, "x") == 1); }
-        if st.route == HANGUP || st.route == RESET || st.route == ANSWERED { assert(http::send(st.s, "w") == 1); }
+        if st.route == HANGUP || st.route == RESET || st.route == ANSWERED || st.route == BIG {
+            assert(http::send(st.s, "w") == 1);
+        }
         if st.route == STALE { assert(http::send(st.s, "c") == 1); }
         // The backend answers neither. The first sends a part of the
         // response, so the client knows to reset the stream while it waits;
-        // the second answers in the call that waited, which ends the wait.
+        // the second answers in the call that waited, which ends the wait,
+        // and keeps the socket, as a pool would, for the next request to
+        // hang up. A socket hung up in that call would close before the loop
+        // submits its poll.
         if st.route == RESET {
             http::begin(out, 200, -1);
             http::send(out, "waiting");
@@ -197,7 +209,9 @@ fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const
         }
         if st.route == ANSWERED {
             http::wait_socket(out, st.s, http::READABLE, 5000);
-            answer(st, out, 200, "answered");
+            kept = st.s;
+            st.s = http::Socket { .. };
+            http::respond(out, 200, "text/plain", "answered");
             return;
         }
     }
@@ -240,14 +254,18 @@ fn handle(ev: http::Event, st: St&, out: http::Reply, ports: Ports, large: const
 thread_fn worker(cfg: http::Config, ports: Ports) {
     var large: u8[>..] = [];
     large.resize(LARGE, 'c');
-    let e = http::serve_epoll(cfg, St { .. }) { ev, st, out => handle(ev, st, out, ports, large); };
+    var kept = http::Socket { .. };
+    let e = http::serve_epoll(cfg, St { .. }) { ev, st, out => handle(ev, st, out, ports, large, kept); };
+    http::hangup(kept);
     http::report(e);
 }
 
 thread_fn ring_worker(cfg: http::Config, ports: Ports) {
     var large: u8[>..] = [];
     large.resize(LARGE, 'c');
-    let e = http::serve(cfg, St { .. }) { ev, st, out => handle(ev, st, out, ports, large); };
+    var kept = http::Socket { .. };
+    let e = http::serve(cfg, St { .. }) { ev, st, out => handle(ev, st, out, ports, large, kept); };
+    http::hangup(kept);
     http::report(e);
 }
 
@@ -311,15 +329,51 @@ fn h2_open(address: const u8[:]) -> http::Socket {
     return s;
 }
 
-fn h2_get(s: http::Socket, enc: http::HpackTable&, id: i64, path: const u8[:]) {
+// Requests path on stream id; a body follows unless end.
+fn h2_get(s: http::Socket, enc: http::HpackTable&, id: i64, path: const u8[:], end: bool = true) {
     var fb: u8[>..] = [];
-    http::hpack_encode(enc, fb, ":method", "GET");
+    http::hpack_encode(enc, fb, ":method", if end { "GET" } else { "POST" });
     http::hpack_encode(enc, fb, ":scheme", "http");
     http::hpack_encode(enc, fb, ":path", path);
     http::hpack_encode(enc, fb, ":authority", "test");
     var out: u8[>..] = [];
-    http::h2_write_headers(out, id, fb, true);
+    http::h2_write_headers(out, id, fb, end);
     assert(http::send_all(s, out, 5000).code == 0);
+}
+
+fn h2_body(s: http::Socket, id: i64, n: i64, end: bool) {
+    var piece: u8[>..] = [];
+    piece.resize(n, 'b');
+    var out: u8[>..] = [];
+    http::h2_write_data(out, id, piece, end);
+    assert(http::send_all(s, out, 5000).code == 0);
+}
+
+// The :status of stream id's response, decoded with dec, which must have
+// read every field block before it.
+fn h2_status(s: http::Socket, dec: http::HpackTable&, pending: u8[>..]&, id: i64) -> u8[>..] {
+    var buf: u8[4096] = [0; 4096];
+    var status: u8[>..] = [];
+    loop {
+        let fr, size, err = http::h2_parse(pending, http::H2_MAX_FRAME_SIZE);
+        if size > 0 {
+            let mine = fr.kind == http::H2_HEADERS && fr.stream == id;
+            if mine {
+                var scratch: u8[>..] = [];
+                assert(http::hpack_decode(dec, fr.data, scratch) { n, v =>
+                    if n == ":status" { status.append(v); }
+                });
+            }
+            let rest = pending.len - size;
+            for i in rest { pending[i] = pending[size + i]; }
+            pending.resize(rest, 0);
+            if mine { return status; }
+            continue;
+        }
+        let n = http::recv(s, buf, 10000);
+        assert(n > 0);
+        pending.append(buf[..n]);
+    }
 }
 
 // The payload of stream id's next DATA frame, and whether it ended the
@@ -373,6 +427,21 @@ fn on_h2(address: const u8[:]) -> u8[>..] {
     h2_whole(s, enc, pending, 5, "/answered", lines);
     h2_whole(s, enc, pending, 7, "/ping", lines);
     http::hangup(s);
+    // A body past H2_MAX_BODY, its last piece sent while the handler waits:
+    // 413 closes the stream, on a connection of its own, so the decoder
+    // reads its field block first. The first piece is too long to gather,
+    // so the handler is called before it.
+    let b = h2_open(address);
+    var benc = http::hpack_table();
+    var bdec = http::hpack_table();
+    var bpending: u8[>..] = [];
+    h2_get(b, benc, 1, "/big", false);
+    h2_body(b, 1, H2_MAX_BODY / 2 + 1000, false);
+    sleep_ms(100);
+    h2_body(b, 1, H2_MAX_BODY / 2, true);
+    format(lines, "h2 /big: ", h2_status(b, bdec, bpending, 1), "\n");
+    h2_whole(b, benc, bpending, 3, "/ping", lines);
+    http::hangup(b);
     return lines;
 }
 
@@ -389,7 +458,11 @@ fn h2_whole(s: http::Socket, enc: http::HpackTable&, pending: u8[>..]&, id: i64,
     format(lines, "h2 ", path, ": ", body, "\n");
 }
 
-let H2_WANT = "h2 /reset: waiting\nh2 /ping: pongpong\nh2 /answered: answered\nh2 /ping: pongpong\n";
+let H2_WANT = "h2 /reset: waiting\nh2 /ping: pongpong\nh2 /answered: answered\nh2 /ping: pongpong\nh2 /big: 413\nh2 /ping: pongpong\n";
+
+// The h2c listeners' Config.max_body, above the 8192 bytes of a body they
+// gather before the handler's REQUEST.
+let H2_MAX_BODY = 16384;
 
 fn main() {
     let lfd, port = listener(16);
@@ -415,9 +488,11 @@ fn main() {
     // A socket still open would keep the backend from the next connection.
     on_epoll(epoll, "/hangup");
     on_epoll(epoll, "/ping");
+    on_epoll(epoll, "/answered");
+    on_epoll(epoll, "/ping");
     let epoll_h2 = unix_address("epoll_h2.sock");
     let w2 = thread_spawn(worker, http::Config { address: epoll_h2, h2c: true, workers: 1, mail_slots: 16,
-                                                 max_waiting: 16, .. }, ports);
+                                                 max_waiting: 16, max_body: H2_MAX_BODY, .. }, ports);
     let h2_got = on_h2(epoll_h2);
     print(h2_got[..h2_got.len - 1]);
     let ring = unix_address("ring.sock");
@@ -432,9 +507,11 @@ fn main() {
     on_ring(ring, "/stale", "HTTP/1.1 200 OK: no stale wake", native);
     on_ring(ring, "/hangup", "HTTP/1.1 200 OK: hung up", native);
     on_ring(ring, "/ping", "HTTP/1.1 200 OK: pongpong", native);
+    on_ring(ring, "/answered", "HTTP/1.1 200 OK: answered", native);
+    on_ring(ring, "/ping", "HTTP/1.1 200 OK: pongpong", native);
     let ring_h2 = unix_address("ring_h2.sock");
     let r2 = thread_spawn(ring_worker, http::Config { address: ring_h2, h2c: true, workers: 1, mail_slots: 16,
-                                                      max_waiting: 16, .. }, ports);
+                                                      max_waiting: 16, max_body: H2_MAX_BODY, .. }, ports);
     let ring_got = on_h2(ring_h2);
     let h2_ok = if native { ring_got == H2_WANT } else { find(ring_got, "ENOSYS") >= 0 };
     if !h2_ok { print(ring_got); }

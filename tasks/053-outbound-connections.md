@@ -2,7 +2,8 @@
 
 Status: in-progress (asked for 2026-10-19). The blocking socket and the epoll, kqueue,
 and io_uring loops' half are built, io_uring's on 2026-10-22, h2 streams that wait
-included. See "Handover" at the end for what remains.
+included, and so are the fixes for items 7 and 8 found then. See "Handover" at the end
+for what remains.
 
 The loop opens TCP connections to other servers, not only accepts them. goose-postgres
 needs them (its task 001), and so do the ACME package's requests to its directory over
@@ -106,15 +107,9 @@ On 2026-10-19, at Goose `dcc2747`, the pin:
    socket, and Windows may refuse a connect to a full backlog with `ECONNREFUSED` where
    the blocking test expects `ETIMEDOUT`.
 6. ~~An h2 stream waiting on a socket~~: built 2026-10-22; see "io_uring" below.
-7. On io_uring, an HTTP/1.1 handler that calls `wait_socket` and then answers in the
-   same call doesn't wait, and its poll stays armed until the socket's event, past
-   the connection's close: `close_conn` disarms only while an exchange waits. A
-   handler that hangs up the socket then keeps it open until that event. h2's
-   `call` disarms in that case; HTTP/1.1's `unwait` could call `net_disarm` too,
-   if a count shows it costs the request path nothing.
-8. h2's 413, for a body past `Config.max_body`, closes the stream through `local_end`
-   without `CLOSED` to its handler (read in `h2.goose`, not tested), so a socket the
-   handler holds, waiting or not, is never hung up.
+7. ~~An HTTP/1.1 handler that answers in the call that waited, on io_uring~~: built
+   2026-10-22; see "io_uring" below.
+8. ~~h2's 413 without `CLOSED`~~: built 2026-10-22; see "io_uring" below.
 
 ### io_uring
 
@@ -157,6 +152,28 @@ Built 2026-10-22
   stream; `/answered` waits and answers in the same call; a `/ping` after each must
   reach the backend, which serves one connection at a time. With `net_disarm` made a
   no-op, both `/ping`s on io_uring time out.
+- HTTP/1.1's `unwait` in `http.goose`, for a handler that answers in the call that
+  waited, calls `net_disarm(key)` as `h2_unwait` does. Before, its poll stayed armed
+  past the connection's close, since `close_conn` disarms only while an exchange
+  waits, and held a socket the handler hung up open until the socket's event. The
+  test's `/answered` over HTTP/1.1, then a `/ping`, fails on io_uring without it.
+- h2's `refuse_stream`, whose refusal closes the stream (413 for a body past
+  `Config.max_body`), calls `h2_abandon` first, so a handler owed a call gets `CLOSED`
+  and hangs up its socket, waiting or not. Before, `local_end` closed the stream
+  without it. HTTP/1.1's refusals close the connection, whose `close_conn` gives
+  `CLOSED`, and h2's resets and the client's call `h2_abandon` already. The test's
+  h2c `/big` sends a body past its listener's 16 KiB `max_body` while the handler
+  waits, then a `/ping`; without the call it fails on every loop where `wait_socket`
+  works. The backend gives up on a socket after 10 s, so a socket left open fails the
+  next route rather than hanging the run.
+- `/answered`, over HTTP/1.1 and h2c, keeps its socket for the worker's next request
+  to hang up, as a pool would. One hung up in the call that waited closes before the
+  loop submits its poll, which then fails, so it tested nothing on io_uring.
+- `unwait`'s call runs only for an exchange that waits. Under cachegrind, as above,
+  before and after: `/plaintext` 2672.9 and 2672.9 on epoll, 2729.4 and 2729.3 on
+  io_uring; `/api/me` 4590.0 and 4579.9 on epoll, 4611.7 and 4615.7 on io_uring, all of
+  each difference in `http_answer`, where gcc lays the function out differently. The
+  call in `retire` instead, which every wait's end passes, cost 1 more on each.
 
 ### What goose-postgres's facade calls
 

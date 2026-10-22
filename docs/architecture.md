@@ -412,12 +412,13 @@ thread-local of the shim while it runs, which `net_arm` finds.
 On `serve`'s io_uring ring, `ring_bind` lists the ring instead, and `net_arm` queues a
 one-shot `IORING_OP_POLL_ADD`. The key stays in a record of the shim's, and the
 completion comes with the tag `RING_SOCKET` and the record's index, on the path for
-completions that match no connection. A wait that ends another way, an h2 stream's
-reset or answer while it waits, and a connection's close cancel the poll, which would
-otherwise hold the socket open after the handler hangs it up
-([decisions](decisions.md#io_uring-cancels-a-sockets-poll-when-its-wait-ends)). The h2
-stream code, which every loop shares, cancels through `net_disarm`, which does nothing
-on a thread that `ring_bind` didn't bind.
+completions that match no connection. A wait that ends another way, an answer in the
+call that waited, an h2 stream's reset or refusal while it waits, and a connection's
+close cancel the poll, which would otherwise hold the socket open after the handler
+hangs it up
+([decisions](decisions.md#io_uring-cancels-a-sockets-poll-when-its-wait-ends)). The
+exchange and h2 stream code, which every loop shares, cancels through `net_disarm`,
+which does nothing on a thread that `ring_bind` didn't bind.
 A thread with neither, such as one running the emulated ring or IOCP, gets `ENOSYS`.
 
 ## The store

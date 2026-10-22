@@ -20,6 +20,11 @@ Fixed:
   the call that waited, cancels the socket's poll, which held a socket the handler hung
   up open until its next event or the connection's close. `test/outbound/` tests both
   over h2c on every loop where `wait_socket` works.
+- On io_uring, an HTTP/1.1 handler that answers in the call that waited on
+  `http::wait_socket` cancels the socket's poll too.
+- An h2 stream refused with 413, for a body past `Config.max_body`, calls its handler
+  with `CLOSED` when it was owed a call, as a reset does, so a socket it holds is hung
+  up. `test/outbound/` tests both on every loop where `wait_socket` works.
 
 ## v0.5.0 (2026-10-22)
 
