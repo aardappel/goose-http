@@ -23,7 +23,7 @@ generation from OpenAPI, see [goose-rest](https://github.com/kaitk/goose-rest).
 | 🟢 | HTTP/1.1 | Keep-alive, pipelining, chunked bodies, trailers, and `Expect: 100-continue`. Also supports HTTP/1.0. |
 | 🟢 | Compression | Files compressed with Brotli, Zstandard, or gzip; on-the-fly gzip, deflate, and Zstandard with [goose-compress](https://github.com/kaitk/goose-compress). |
 | 🟡 | HTTP/2 | h2c, HTTP/2 over TCP with prior knowledge, on a port of its own, on Linux and macOS ([API](docs/api.md#several-ports-and-h2c)). Not yet over TLS. |
-| 🟡 | TLS | HTTPS: HTTP/1.1 over TLS 1.3 on both loops on Linux and macOS, on a port of its own, from the module `http.tls` with [goose-tls](https://github.com/kaitk/goose-tls) and OpenSSL 3 ([API](docs/api.md#https)), and the kernel's TLS on epoll when the context asks for it. Not yet on Windows, nor with h2, nor the kernel's TLS on io_uring. |
+| 🟡 | TLS | HTTPS: HTTP/1.1 over TLS 1.3 on both loops on Linux and macOS, on a port of its own, from the module `http.tls` with [goose-tls](https://github.com/kaitk/goose-tls) and OpenSSL 3 ([API](docs/api.md#https)). Not yet on Windows, nor with h2. |
 | 🟢 | WebSocket | RFC 6455: text and binary messages, fragments, ping, and close, in the optional `http.websocket` module, with SHA-1 from [goose-hash](https://github.com/kaitk/goose-hash) ([API](docs/api.md#websocket)). Passes Autobahn's test suite. No extensions, such as permessage-deflate, and not over HTTP/2. |
 | 🟡 | Outbound connections | TCP and Unix sockets to other servers, such as a database: blocking calls with time limits for a lane's thread, and non-blocking ones on the epoll, kqueue, and io_uring loops, where the exchange waits for the socket ([API](docs/api.md#outbound-connections)). Not yet on the emulated ring or IOCP; host names other than `localhost` aren't resolved yet. |
 | ⚪ | HTTP/3 | Deferred until QUIC on Linux matures; it currently uses more CPU than TCP for the same traffic. |
@@ -37,7 +37,7 @@ generation from OpenAPI, see [goose-rest](https://github.com/kaitk/goose-rest).
 
 ## What it provides
 
-The latest tag, `v0.4.3`, provides all of this on every platform above:
+The latest tag, `v0.5.0`, provides all of this on every platform above:
 
 - A strict parser that guards against request smuggling and returns 414, 431, 501, and
   505 where appropriate; header fields, path, query, and percent-decoding support.
@@ -70,7 +70,7 @@ a program also needs a C compiler and, on Linux, liburing:
 Save this as `hello.goose`:
 
 ```rust
-import http from "github.com/kaitk/goose-http@v0.4.3";
+import http from "github.com/kaitk/goose-http@v0.5.0";
 
 thread_fn worker(cfg: http::Config) {
     let e = http::serve(cfg) { req, body, out =>

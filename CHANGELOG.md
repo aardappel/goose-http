@@ -4,8 +4,8 @@ What each tag adds. Each release names the Goose compiler it was built and teste
 
 ## v0.5.0 (2026-10-22)
 
-Conveniences split into public parts, a budget for the gather pool, and TLS on the
-io_uring loop. Goose `v2026.3`, goose-hash `v0.0.4`, goose-tls `v0.0.3`, and
+Conveniences split into public parts, a budget for the gather pool, and TLS and
+outbound connections on the io_uring loop. Goose `v2026.3`, goose-hash `v0.0.4`, goose-tls `v0.0.3`, and
 goose-compress `v0.1.1`.
 
 Breaking:
@@ -59,6 +59,11 @@ Added:
   server)` serve the listeners that ask for TLS, as `serve_epoll` does. An idle TLS
   connection that times out, or one a stop closes, sends close_notify. On Windows,
   `serve` still fails with `ENOSYS` on a TLS listener.
+- Outbound connections on the io_uring loop: `http::wait_socket` waits on `serve` with
+  io_uring as on `serve_epoll`, and the socket's poll is cancelled once the wait ends,
+  so no stale `SOCKET_READY` reaches a later wait. The emulated ring and IOCP still
+  fail it with `ENOSYS`
+  ([decision](docs/decisions.md#io_uring-cancels-a-sockets-poll-when-its-wait-ends)).
 - kTLS on the epoll loop on Linux: a context that asks with goose-tls's
   `tls::use_kernel(ctx)` hands each connection's record layer to the kernel after its
   handshake. Handlers don't change, and io_uring's connections stay in user space.

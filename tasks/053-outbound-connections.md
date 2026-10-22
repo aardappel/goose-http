@@ -1,8 +1,8 @@
 # 053: Outbound connections
 
 Status: in-progress (asked for 2026-10-19). The blocking socket and the epoll, kqueue,
-and io_uring loops' half are built; io_uring's is on the branch `uring-outbound`
-(2026-10-22), for review. See "Handover" at the end for what remains.
+and io_uring loops' half are built, io_uring's on 2026-10-22. See "Handover" at the
+end for what remains.
 
 The loop opens TCP connections to other servers, not only accepts them. goose-postgres
 needs them (its task 001), and so do the ACME package's requests to its directory over
@@ -96,8 +96,7 @@ On 2026-10-19, at Goose `dcc2747`, the pin:
 
 1. goose-postgres's task 002 builds its facade on the blocking calls (below), and task
    005 its pool on `wait_socket`.
-2. ~~io_uring~~: built on the branch `uring-outbound` (2026-10-22); see "io_uring"
-   below.
+2. ~~io_uring~~: built 2026-10-22; see "io_uring" below.
 3. The emulated ring and IOCP: the emulation can arm its own epoll instance or kqueue
    as `net_arm` does; IOCP needs `ConnectEx` and a zero-byte `WSARecv` for readability.
 4. Name resolution off the loop: `getaddrinfo` on a lane, or in the blocking `connect`
@@ -113,7 +112,7 @@ On 2026-10-19, at Goose `dcc2747`, the pin:
 
 ### io_uring
 
-Built 2026-10-22, on the branch `uring-outbound`
+Built 2026-10-22
 ([decision](../docs/decisions.md#io_uring-cancels-a-sockets-poll-when-its-wait-ends)):
 
 - `uring.goose` calls `ring_bind` when waiting is configured, so `net_arm` queues a
