@@ -2,6 +2,27 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
+## v0.5.2 (2026-10-22)
+
+Host names in the blocking `connect`, and goose-tls's faster server. Goose `v2026.3`,
+goose-hash `v0.0.4`, goose-tls `v0.0.5`, and goose-compress `v0.1.1`.
+
+Added:
+
+- `http::connect(host, port, ms)`, the blocking connect for a thread without a loop,
+  resolves a host name with the system's resolver, then tries its addresses in the
+  resolver's order, up to 8, all within `ms`. The lookup itself isn't bounded by `ms`,
+  and fails with `resolve`'s `ENOENT` for a name with no address or `EAGAIN` for one
+  that failed for now. The loop's `http::connect_start` still fails a name with
+  `ENOSYS`, since resolving blocks the loop.
+
+Changed:
+
+- goose-tls `v0.0.5`: the server's overhead cut, with one HKDF and one HMAC context
+  reused through a handshake and records decrypted in place. In goose-tls's own
+  measurements, 8.3% less CPU a json-like request, 2.7% a full handshake, and 11.8% a
+  resumed one. No API change.
+
 ## v0.5.1 (2026-10-22)
 
 h2 over TLS, goose-tls's own TLS 1.3 server, and outbound sockets released when an h2
