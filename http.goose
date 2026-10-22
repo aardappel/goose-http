@@ -250,8 +250,11 @@ let DONE: u8 = 5;
 // that does none of these gets 500, as at REQUEST.
 let WAKE: u8 = 6;
 // later's time limit passed first, or there was no room to wait: no box, or
-// Config.max_waiting exchanges waiting already. As WAKE otherwise.
+// Config.max_waiting exchanges waiting already, which its tag NO_ROOM says.
+// As WAKE otherwise.
 let TIMEOUT: u8 = 7;
+// TIMEOUT's tag when the exchange found no room to wait, and got it at once.
+let NO_ROOM: i32 = 1;
 // No event, for answer's wake.
 let NO_EVENT: u8 = 255;
 
@@ -278,7 +281,7 @@ struct Event {
     status: i32 = 0,
     sent: i64 = 0,
     ms: i64 = 0,
-    // WAKE's tag, as the sender gave it.
+    // WAKE's tag, as the sender gave it, and TIMEOUT's, NO_ROOM or 0.
     tag: i32 = 0,
 }
 

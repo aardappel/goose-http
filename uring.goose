@@ -468,7 +468,8 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
             st.x.stream.waiting = false;
             retire(st.x.stream);
             wake_at = k;
-            let ev = Event { kind: TIMEOUT, req: nothing, data: "", whole: false, trailers: "" };
+            let ev = Event { kind: TIMEOUT, req: nothing, data: "", whole: false, trailers: "",
+                             tag: if waited { 0 } else { NO_ROOM } };
             resume(c, ev);
             wake_at = -1;
             return;
@@ -476,7 +477,8 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
         guard c.fd >= 0 && c.state == OPEN && c.x.stream.later.key == key && c.x.stream.waiting == waited else { return; }
         c.x.stream.waiting = false;
         retire(c.x.stream);
-        let ev = Event { kind: TIMEOUT, req: nothing, data: "", whole: false, trailers: "" };
+        let ev = Event { kind: TIMEOUT, req: nothing, data: "", whole: false, trailers: "",
+                         tag: if waited { 0 } else { NO_ROOM } };
         resume(c, ev);
     }
 

@@ -213,7 +213,7 @@ thread_fn worker(cfg: http::Config) {
 | `MORE` | A response is open, the body has ended, and the connection has room to send. |
 | `CLOSED` | The connection closed while the handler was owed a call. Release what `st` holds. |
 | `WAKE` | A message came to the address `later` returned: its bytes in `ev.data`, its tag in `ev.tag`. ([Answers that wait](#answers-that-wait)) |
-| `TIMEOUT` | `later`'s time limit passed first, or there was no room to wait. |
+| `TIMEOUT` | `later`'s time limit passed first, or there was no room to wait, which `ev.tag == http::NO_ROOM` says. |
 | `DONE` | With `Config.log`, the response is whole: `ev.status`, `ev.sent` bytes, and `ev.ms` from the head's first byte, for an access log. `ev.req` is the request only when it was answered at `REQUEST`. |
 
 - `http::begin(out, status, length)` opens a response: `Content-Length`, or chunked
@@ -368,7 +368,7 @@ else { http::respond(out, 503, "text/plain", "busy"); return; }
   `MORE`, it pauses an open response, for Server-Sent Events and long polling. A call
   that writes a whole response doesn't wait. A worker holds at most
   `Config.max_waiting` exchanges waiting at once; past it, `later` gives `TIMEOUT` at
-  once.
+  once, with the tag `http::NO_ROOM`, so a handler can answer 503 rather than 504.
 - Requests pipelined behind a waiting exchange wait in the read buffer, and reading
   stops once it's full.
 - An upgraded connection is read while it waits: the client's bytes still come as
