@@ -3,9 +3,9 @@
   "language": "Goose",
   "type": "engine",
   "engine": "io_uring",
-  "description": "goose-http: an HTTP/1.1 server written in Goose, one worker per CPU, each with its own SO_REUSEPORT listener and io_uring ring.",
+  "description": "goose-http: an HTTP/1.1 and HTTP/2 server written in Goose, one worker per CPU, each with its own SO_REUSEPORT listener and io_uring ring.",
   "repo": "https://github.com/kaitk/goose-http",
   "enabled": true,
-  "tests": ["baseline", "pipelined", "limited-conn", "latency-1m", "latency-10k", "async", "json-comp", "json-tls", "8gbit", "static-h2", "echo-ws", "echo-ws-pipeline", "echo-ws-limited"],
+  "tests": ["baseline", "pipelined", "limited-conn", "latency-1m", "latency-10k", "async", "json-comp", "json-tls", "8gbit", "baseline-h2", "static-h2", "echo-ws", "echo-ws-pipeline", "echo-ws-limited"],
   "maintainers": []
 }
