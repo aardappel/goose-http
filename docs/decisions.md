@@ -657,6 +657,36 @@ sockets as it reads accepted ones (above); a blocking socket with `SO_RCVTIMEO` 
 `SO_SNDTIMEO`, which has no time limit for the connect; and a socket module separate
 from the loops, which the worker's half needs anyway.
 
+## Every convenience is a composition of public parts
+
+Decided 2026-10-22, task 059.
+
+A function that decides and acts in one call, such as a check that writes its own
+refusal, is a convenience over public parts that a program can call on their own: a
+check returns its verdict, and a separate function writes the response; a protocol
+function takes the bytes and fields it reads, not a whole `http::Event`; and a resource
+a worker keeps, such as the pool that `http::gather` fills, is one a program can reach.
+The convenience stays, as a short composition of its parts, so a direct user writes
+what it wrote before.
+
+Programs and frameworks built on goose-http compose these parts. A framework answers
+in its own error shape, keeps its handler's inputs in a context of its own rather than
+an `Event`, and holds its buffers where its other buffers are. Where only the composite
+is public, it has to wrap the composite, fake the composite's inputs, or rebuild it. A
+rebuilt part drifts from the original, and its buffers sit in a second arena beside the
+package's.
+
+A part leaves the request path's cost as it is: a split that adds instructions to a
+request doesn't land, as for every idiom ([the API isn't
+frozen](#the-api-isnt-frozen), task 027). Breaking changes cost least before v0.5.0
+is tagged.
+
+Rejected: keeping only composites and adding a parameter to each for the cases a
+caller needs, such as a flag that suppresses a refusal or a callback that writes it,
+which grows every composite and still hides its parts; and hooks a framework registers
+with the package, which Goose's function values, which can't be stored (spec §7.6),
+don't allow.
+
 ## Not yet decided
 
 ### Compression in an optional module
