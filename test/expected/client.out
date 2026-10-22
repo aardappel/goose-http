@@ -1,0 +1,25 @@
+== https
+200, Content-Length 68:
+Bearer k-123
+dev-9
+application/json
+{"user":"ann","password":"p\"w"}
+200, Content-Length 5:
+hello
+Connection: close
+200, Content-Length 5:
+hello
+Connection: (none)
+== http
+200, Content-Length 68:
+Bearer k-123
+dev-9
+application/json
+{"user":"ann","password":"p\"w"}
+== refused
+url true
+header true
+header true
+body true
+== untrusted
+tls 0

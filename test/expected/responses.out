@@ -1,0 +1,42 @@
+https://example.com -> true | example.com | example.com | 443 | /
+http://example.com:8080/a?b=1#frag -> false | example.com:8080 | example.com | 8080 | /a?b=1
+https://acme-v02.api.letsencrypt.org/directory -> true | acme-v02.api.letsencrypt.org | acme-v02.api.letsencrypt.org | 443 | /directory
+https://[::1]:14000/dir?x=1 -> true | [::1]:14000 | ::1 | 14000 | /dir?x=1
+https://127.0.0.1 -> true | 127.0.0.1 | 127.0.0.1 | 443 | /
+https://:443/dir -> refused
+https://example.test:0/ -> refused
+https://example.test:+443/ -> refused
+https://example.test:65536/ -> refused
+https://[::1/ -> refused
+https://user@example.test/ -> refused
+https:// -> refused
+ftp://x/ -> refused
+POST: as expected
+POST, no body: as expected
+HEAD: as expected
+length: complete, 201, [hello], location https://ca.test/acct/1, nonce [abc]
+length, cut at the close: malformed
+length, past the limit: malformed
+chunked: complete, 200, [hello]
+chunked, with a trailer: complete, 200, [hello]
+chunked, cut at the close: malformed
+chunked, past the limit: malformed
+chunked, a short chunk: malformed
+chunked, a signed size: malformed
+to the close: complete at close, 200, [until the end]
+a 100 first: complete, 201, [ok]
+a HEAD: complete, 200, [], nonce [n1]
+204: complete, 204, [], nonce [n2]
+304: complete, 304, []
+no reason: complete, 200, []
+the head, cut at the close: malformed
+no status: malformed
+HTTP/2: malformed
+two lengths: malformed
+a signed length: malformed
+a negative length: malformed
+another coding: malformed
+a field without a colon: malformed
+a space in a name: malformed
+a bare LF: malformed
+fields: [7] [a=1] false

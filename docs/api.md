@@ -655,6 +655,75 @@ http::wait_socket(out, st.s, http::READABLE, 1000);
 `http::serve` watches sockets on io_uring only: on its emulation and on IOCP,
 `wait_socket` fails with `ENOSYS`, and only the blocking calls work.
 
+### An HTTP client
+
+The module `http.client` makes HTTP/1.1 requests, plain or over TLS, on the blocking
+socket, so it runs where the blocking calls do: on a lane's thread, or in a program
+without a loop. A program that imports it declares goose-tls in its root file, as for
+[HTTPS](#https). Shown in `test/client/`.
+
+```rust
+import http from "github.com/kaitk/goose-http@<tag>";
+import tls from "github.com/kaitk/goose-tls@v0.0.5";
+import http.client;
+
+var session = http::session();
+let response, err = http::post(session, "https://api.example.com/v1/login") { req =>
+    http::bearer(req, api_key);
+    http::header(req, "X-Device-Id", device_id);
+    http::json(req, credentials);
+};
+guard err.code == 0 else { /* err.call names the step that failed */ }
+let token, found = http::header(response, "X-Token");
+http::free(session);
+```
+
+| Call | Does |
+|---|---|
+| `http::session(ms)` | A session whose TLS trusts OpenSSL's store of certificate authorities, with a limit of `ms` milliseconds on each wait, 30,000 by default (-1: none) |
+| `http::session_trusting(ca, ms) -> Session, bool` | A session whose TLS trusts only the certificates in `ca`, PEM text, and whether its context was made |
+| `http::free(s)` | Closes the session's connection and frees its TLS context |
+| `http::get(s, url) { req => ... }`, `post`, `put`, `patch`, `delete` | Sends the request once the block has added to it, and returns the `http::ClientResponse` and an `http::Error` |
+| `http::get(s, url)`, `http::delete(s, url)` | The same, with nothing to add |
+| `http::request(s, method, url) { req => ... }` | Any other method |
+| `http::header(req, name, value)` | Adds a header field |
+| `http::bearer(req, token)` | Adds `Authorization: Bearer token` |
+| `http::json(req, v)` | Makes `v` the body, as `v`'s `format` overload writes it, with `Content-Type: application/json` |
+| `http::body(req, media, bytes)` | Makes `bytes` the body, with `Content-Type: media` |
+| `http::header(r, name) -> const u8[:], bool` | A response field's value, as `field_of` finds a request's |
+
+A `ClientResponse` holds `status`, `fields`, its header field lines, each ending in CRLF,
+and `body`. `Session.max_body`, 16 MB by default, is the most body a response may have,
+as sent. `Session.via` is an address to connect to in place of the URL's host and port,
+such as `unix:/run/app.sock`; TLS still checks the URL's host.
+
+- A session keeps its connection, and reuses it for the next request to the same scheme,
+  host, and port, unless the server answered with `Connection: close` or has closed it
+  since. It doesn't send a request again on a connection that fails.
+- It writes `Host`, `User-Agent: goose-http`, `Accept: */*`, `Content-Type`, and
+  `Content-Length` itself, and decodes a chunked body. It skips a 1xx before the final
+  response. It doesn't follow redirects, keep cookies, or decode a compressed body.
+- Under TLS, a connection that ends without close_notify fails with `recv`, so a body
+  that ends with the connection can't be cut short unnoticed.
+
+A request that fails returns status 0 and an `http::Error`, whose `call` names the step:
+
+| `call` | When |
+|---|---|
+| `url` | The URL isn't `http://` or `https://` with a host, or has a user or a bad port |
+| `header` | A field name isn't a token, a value holds a control byte such as CR or LF, or the block set `Host`, `Content-Length`, `Transfer-Encoding`, or `Connection` |
+| `body` | The block set a second body |
+| `resolve`, `connect`, `send`, `recv` | The socket's, with its code, as [on a thread without a loop](#on-a-thread-without-a-loop) |
+| `tls` | The handshake failed, such as for a certificate the session doesn't trust, or a TLS record did; `tls::error_text()` says why |
+| `response` | The response is malformed, or its body is past `max_body` |
+
+The calls are compositions of parts a program can call on its own:
+`http::parse_url(url) -> Url, bool`, `http::write_request(out, method, u, req)`, which
+appends the request's bytes, `http::read_response(raw, closed, head, max_body, r)`, which
+reads a response from the bytes so far (`READ_COMPLETE`, `READ_AT_CLOSE`, `INCOMPLETE`,
+or `READ_MALFORMED`), and `http::exchange(s, method, url, req)`, which carries one
+request on the session's connection.
+
 ## The store
 
 Used by the benchmarks' REST server, `bench/rest/goose/rest.goose`.

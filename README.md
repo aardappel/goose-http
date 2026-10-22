@@ -26,6 +26,7 @@ generation from OpenAPI, see [goose-rest](https://github.com/kaitk/goose-rest).
 | 🟡 | TLS | HTTPS: HTTP/1.1 and h2 over TLS 1.3 on both loops on Linux and macOS, on one port, as ALPN chooses, from the module `http.tls` with [goose-tls](https://github.com/kaitk/goose-tls)'s server in Goose over OpenSSL 3's libcrypto ([API](docs/api.md#https)). Not yet on Windows. |
 | 🟢 | WebSocket | RFC 6455: text and binary messages, fragments, ping, and close, in the optional `http.websocket` module, with SHA-1 from [goose-hash](https://github.com/kaitk/goose-hash) ([API](docs/api.md#websocket)). Passes Autobahn's test suite. No extensions, such as permessage-deflate, and not over HTTP/2. |
 | 🟡 | Outbound connections | TCP and Unix sockets to other servers, such as a database: blocking calls with time limits for a lane's thread, and non-blocking ones on the epoll, kqueue, and io_uring loops, where the exchange waits for the socket ([API](docs/api.md#outbound-connections)). Not yet on the emulated ring or IOCP. The blocking `connect` resolves host names; the loop's `connect_start` doesn't yet. |
+| 🟡 | HTTP client | HTTP/1.1 and HTTPS requests from a lane's thread or a program without a loop, with a kept connection, fields, and a JSON body, in the optional `http.client` module ([API](docs/api.md#an-http-client)). Blocking only; needs goose-tls, so not yet on Windows. |
 | ⚪ | HTTP/3 | Deferred until QUIC on Linux matures; it currently uses more CPU than TCP for the same traffic. |
 
 | | Platform | Notes |

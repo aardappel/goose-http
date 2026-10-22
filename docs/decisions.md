@@ -661,6 +661,33 @@ sockets as it reads accepted ones (above); a blocking socket with `SO_RCVTIMEO` 
 `SO_SNDTIMEO`, which has no time limit for the connect; and a socket module separate
 from the loops, which the worker's half needs anyway.
 
+## An HTTP client is an optional module over the blocking socket
+
+Decided 2026-10-22.
+
+`http.client` makes HTTP/1.1 requests, plain or over goose-tls's client TLS, over
+the blocking `connect`, `send_all`, and `recv`. It's here because goose-http already
+holds what a client needs: the socket and its resolver, and the HTTP/1.1 parts a
+response reuses (`line_end`, `trailer_end`, and `field_at` for its fields,
+`chunked_len` and `dechunk` for a chunked body). As `http.tls` does, it costs a
+program that doesn't import it nothing, and only one that does needs goose-tls.
+goose-rest's client and goose-acme's `https.goose` each wrote half of it; both use this
+one instead.
+
+- It blocks, with a limit on each wait, so it runs on a lane or in a program without a
+  loop. A client for a handler on the loop would drive `connect_start` and
+  `wait_socket` across `WAKE`s, which needs a state machine Goose can't hide behind
+  one call; it waits until a handler needs it, as the loop's resolver does.
+- A session keeps one connection and reuses it for the same scheme, host, and port. It
+  checks with a recv that doesn't wait whether the server has closed the connection,
+  rather than send a request again after a failure, which could repeat a POST.
+- A request's block adds to it through calls that take `req`, so the request's buffers
+  stay the call's own. Its failures are `http::Error`s, `call` naming the step.
+
+Rejected: a client in goose-rest, which uses nothing of goose-rest's and would leave
+goose-acme with its own; and a package of its own, which adds a repository to every
+pin move of goose-tls and goose-http, for code that needs goose-http's parts.
+
 ## Every convenience is a composition of public parts
 
 Decided 2026-10-22, task 059.
