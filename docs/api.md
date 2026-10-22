@@ -566,9 +566,10 @@ socket on Linux and macOS. Shown in `test/outbound/`:
 `serve_epoll` and on `serve`.
 
 An `http::Socket` is the connection, `fd` -1 for none. A host is `localhost`, an IPv4
-or IPv6 address, bracketed or not, or `unix:PATH`, whose port is ignored. Any other
-name fails with `ENOSYS` from `resolve`: resolving one blocks, and a resolver off the
-loop is still to come.
+or IPv6 address, bracketed or not, or `unix:PATH`, whose port is ignored. The blocking
+`http::connect` also takes a name, which it resolves with the system's resolver;
+`http::connect_start` fails one with `ENOSYS` from `resolve`, since resolving blocks
+the loop.
 
 ### On a thread without a loop
 
@@ -585,7 +586,10 @@ http::hangup(s);
 
 - `http::connect(host, port, ms)` returns the socket, connected, or `Socket { fd: -1 }`
   and an `http::Error`: `connect`'s `ECONNREFUSED`, `ETIMEDOUT` past `ms`, and the like,
-  or `connect_start`'s.
+  or `connect_start`'s. A name is resolved first, which `ms` doesn't bound: `resolve`'s
+  `ENOENT` for a name with no address, or `EAGAIN` for a lookup that failed for now.
+  Its addresses are tried in the resolver's order, up to 8, all within `ms`, and the
+  error is the last one's.
 - `http::send_all(s, data, ms)` sends all of `data` within `ms` in all, and returns an
   `http::Error` whose code is 0, `ETIMEDOUT`, or the send's, such as `EPIPE` once the
   server has closed.

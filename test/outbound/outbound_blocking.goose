@@ -1,8 +1,8 @@
 // The blocking calls of an outbound connection (socket.goose), for a thread
 // that runs no loop, against a server thread in the program: a connect and
 // a round trip, a large send, a server that closes, a refused connect, a
-// connect that times out against a full backlog, and a host it can't
-// resolve.
+// connect that times out against a full backlog, a name resolved, and one
+// that can't be.
 import std;
 import http from "../../";
 
@@ -144,9 +144,24 @@ fn main() {
     for i in fillers.len { http::hangup(fillers[i]); }
     http::net_close(full);
 
-    // Only localhost and addresses, for now.
-    s, e = http::connect("db.example", 5432, 5000);
-    print("a name: ", e.call, " ", e.code == http::ENOSYS);
+    // A name, resolved: LOCALHOST isn't connect_start's localhost, and every
+    // resolver finds it in the hosts file. ::1 may come first, where nothing
+    // listens, and then 127.0.0.1 connects.
+    s, e = http::connect("LOCALHOST", port, 5000);
+    print("a name: code ", e.code, ", socket ", s.fd >= 0);
+    if e.code == 0 {
+        assert(http::send_all(s, "x", 5000).code == 0);
+        http::hangup(s);
+    }
+    // .invalid has no address (RFC 6761); a resolver with no network fails
+    // it for now instead.
+    s, e = http::connect("name.invalid", 5432, 5000);
+    print("no such name: ", e.call, " ", e.code == http::ENOENT || e.code == http::EAGAIN, ", socket ", s.fd);
+    s, e = http::connect("LOCALHOST", 0, 5000);
+    print("a name, port 0: ", e.call, " ", e.code == http::EINVAL);
+    // connect_start, for a loop, takes no name.
+    s, e = http::connect_start("LOCALHOST", port);
+    print("a name on a loop: ", e.call, " ", e.code == http::ENOSYS);
     s, e = http::connect("127.0.0.1", 0, 5000);
     print("port 0: ", e.call, " ", e.code == http::EINVAL);
 

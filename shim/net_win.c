@@ -336,6 +336,42 @@ int32_t net_connect(net_bytes addr, int32_t port, int32_t flags) {
     return (int32_t)s;
 }
 
+/* The addresses host names, as shim/net.c's net_resolve gives them:
+   -ENOENT, -EAGAIN, or -EINVAL from Winsock's own codes for those cases. */
+int32_t net_resolve(net_bytes host, net_bytes out) {
+    int32_t r = net_win_init();
+    if (r < 0) return r;
+    char name[256];
+    if (host.len <= 0 || host.len >= (int64_t)sizeof name || memchr(host.data, 0, (size_t)host.len))
+        return -22;
+    memcpy(name, host.data, (size_t)host.len);
+    name[host.len] = 0;
+    struct addrinfo hints = { 0 };
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_ADDRCONFIG;
+    struct addrinfo *list;
+    int err = getaddrinfo(name, NULL, &hints, &list);
+    if (err == WSATRY_AGAIN || err == WSANO_RECOVERY) return -11;
+    if (err == WSAHOST_NOT_FOUND || err == WSANO_DATA) return -2;
+    if (err) return -net_win_err(err);
+    int32_t n = 0;
+    for (struct addrinfo *a = list; a && (int64_t)(n + 1) * 16 <= out.len; a = a->ai_next) {
+        uint8_t *p = out.data + n * 16;
+        if (a->ai_family == AF_INET) {
+            memset(p, 0, 10);
+            p[10] = p[11] = 0xff;
+            memcpy(p + 12, &((struct sockaddr_in *)a->ai_addr)->sin_addr, 4);
+            n++;
+        } else if (a->ai_family == AF_INET6) {
+            memcpy(p, &((struct sockaddr_in6 *)a->ai_addr)->sin6_addr, 16);
+            n++;
+        }
+    }
+    freeaddrinfo(list);
+    return n ? n : -2;
+}
+
 /* How net_connect's connect on fd ended, as shim/net.c's: 0, -EINPROGRESS,
    or its error, which SO_ERROR gives. */
 int32_t net_connected(int32_t fd) {

@@ -5,5 +5,8 @@ closed: 0
 send after the close: true
 refused: connect true, socket -1
 timed out: connect true, socket -1
-a name: resolve true
+a name: code 0, socket true
+no such name: resolve true, socket -1
+a name, port 0: connect true
+a name on a loop: resolve true
 port 0: connect_start true

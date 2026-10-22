@@ -10,6 +10,7 @@
    after it returns. */
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -465,6 +466,38 @@ int32_t net_connect(net_bytes addr, int32_t port, int32_t flags) {
                                                                memory_order_relaxed,
                                                                memory_order_relaxed)) {}
     return fd;
+}
+
+/* The addresses host names, as shim/net.c's net_resolve gives them, with
+   Linux's error numbers. */
+int32_t net_resolve(net_bytes host, net_bytes out) {
+    char name[256];
+    if (host.len <= 0 || host.len >= (int64_t)sizeof name || memchr(host.data, 0, (size_t)host.len))
+        return -net_err(EINVAL);
+    memcpy(name, host.data, (size_t)host.len);
+    name[host.len] = 0;
+    struct addrinfo hints = { .ai_family = AF_UNSPEC, .ai_socktype = SOCK_STREAM, .ai_flags = AI_ADDRCONFIG };
+    struct addrinfo *list;
+    int r = getaddrinfo(name, NULL, &hints, &list);
+    if (r == EAI_SYSTEM) return -net_err(errno);
+    if (r == EAI_AGAIN || r == EAI_FAIL) return -net_err(EAGAIN);
+    if (r == EAI_NONAME || r == EAI_NODATA) return -net_err(ENOENT);
+    if (r) return -net_err(EINVAL);
+    int32_t n = 0;
+    for (struct addrinfo *a = list; a && (int64_t)(n + 1) * 16 <= out.len; a = a->ai_next) {
+        uint8_t *p = out.data + n * 16;
+        if (a->ai_family == AF_INET) {
+            memset(p, 0, 10);
+            p[10] = p[11] = 0xff;
+            memcpy(p + 12, &((struct sockaddr_in *)a->ai_addr)->sin_addr, 4);
+            n++;
+        } else if (a->ai_family == AF_INET6) {
+            memcpy(p, &((struct sockaddr_in6 *)a->ai_addr)->sin6_addr, 16);
+            n++;
+        }
+    }
+    freeaddrinfo(list);
+    return n ? n : -net_err(ENOENT);
 }
 
 /* How net_connect's connect on fd ended: 0 once connected, -EINPROGRESS

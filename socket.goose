@@ -18,8 +18,8 @@
 //   tag SOCKET_READY, or TIMEOUT.
 //
 // A host is localhost, an IPv4 or IPv6 address, or unix:PATH for a Unix
-// socket on Linux and macOS; other names are still to come, since resolving
-// one blocks.
+// socket on Linux and macOS. The blocking connect also takes a name, which it
+// resolves; connect_start doesn't, since resolving one blocks.
 namespace http;
 
 import std;
@@ -61,14 +61,20 @@ fn connect_start(host: const u8[:], port: i64) -> Socket, Error {
         return Socket { fd: fd }, no_error();
     }
     guard port > 0 && port < 65536 else { return Socket { .. }, Error { call: "connect_start", code: EINVAL }; }
-    var name = host;
-    if host.len >= 2 && host[0] == '[' && host[host.len - 1] == ']' { name = host[1..host.len - 1]; }
-    let a, ok = address(if name == "localhost" { "127.0.0.1" } else { name });
+    let a, ok = literal(host);
     // A name needs a resolver, which would block the loop.
     guard ok else { return Socket { .. }, Error { call: "resolve", code: ENOSYS }; }
     let fd = net_connect(a.ip, port as i32, 0);
     guard fd >= 0 else { return Socket { .. }, Error { call: "connect", code: -fd }; }
     return Socket { fd: fd }, no_error();
+}
+
+// The address host is written as: localhost, or an IPv4 or IPv6 address,
+// bracketed or not; false for a name to resolve.
+fn literal(host: const u8[:]) -> Address, bool {
+    var name = host;
+    if host.len >= 2 && host[0] == '[' && host[host.len - 1] == ']' { name = host[1..host.len - 1]; }
+    return address(if name == "localhost" { "127.0.0.1" } else { name });
 }
 
 // How connect_start's connect went, once the socket is writable: code 0 when it's
@@ -120,19 +126,55 @@ fn wait_socket(out: Reply, s: Socket, events: u32, ms: i64) -> Error {
     return no_error();
 }
 
+// The most of a name's addresses connect tries.
+let RESOLVED_MAX = 8;
+
 // Connects to host and port, waiting up to ms milliseconds (-1: no limit),
 // for a thread that runs no loop. The socket doesn't block: recv and
 // send_all wait for it. An error as connect_start's, or ETIMEDOUT.
+//
+// A host that is a name is resolved first, with the system's resolver,
+// which the time limit doesn't bound: resolve's ENOENT for a name with no
+// address, or EAGAIN for a lookup that failed for now. Its addresses are
+// tried in the resolver's order, up to RESOLVED_MAX, all within ms; the
+// error is the last one's.
 fn connect(host: const u8[:], port: i64, ms: i64) -> Socket, Error {
-    var s, e = connect_start(host, port);
-    guard e.code == 0 else { return s, e; }
-    let r = ready_by(s, WRITABLE, deadline(ms));
-    let c = if r > 0 { net_connected(s.fd) } else if r == 0 { -ETIMEDOUT } else { r };
-    guard c == 0 else {
-        hangup(s);
-        return s, Error { call: "connect", code: -c };
+    let until = deadline(ms);
+    let a, numeric = literal(host);
+    guard !numeric && !starts_with(host, "unix:") else {
+        var s, e = connect_start(host, port);
+        guard e.code == 0 else { return s, e; }
+        return finish_connect(s, until);
     }
-    return s, no_error();
+    guard port > 0 && port < 65536 else { return Socket { .. }, Error { call: "connect", code: EINVAL }; }
+    var addrs: u8[16 * RESOLVED_MAX] = [0; 16 * RESOLVED_MAX];
+    let n = net_resolve(host, addrs);
+    guard n > 0 else { return Socket { .. }, Error { call: "resolve", code: -n }; }
+    var e = no_error();
+    for i in n {
+        let fd = net_connect(addrs[i * 16..i * 16 + 16], port as i32, 0);
+        if fd < 0 {
+            e = Error { call: "connect", code: -fd };
+            continue;
+        }
+        let s, err = finish_connect(Socket { fd: fd }, until);
+        guard err.code != 0 else { return s, err; }
+        e = err;
+        if err.code == ETIMEDOUT { break; }
+    }
+    return Socket { .. }, e;
+}
+
+// Waits until until for s's connect to end, and hangs s up when it failed.
+fn finish_connect(s: Socket, until: i64) -> Socket, Error {
+    var t = s;
+    let r = ready_by(t, WRITABLE, until);
+    let c = if r > 0 { net_connected(t.fd) } else if r == 0 { -ETIMEDOUT } else { r };
+    guard c == 0 else {
+        hangup(t);
+        return t, Error { call: "connect", code: -c };
+    }
+    return t, no_error();
 }
 
 // Waits up to ms milliseconds (-1: no limit) for bytes, and returns as recv

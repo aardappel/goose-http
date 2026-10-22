@@ -645,9 +645,16 @@ call, not at startup as for an h2c or TLS listener, since `serve` can't know whe
 handler will call `wait_socket`. The blocking calls work on every platform, Windows included, where a Unix socket
 is `EAFNOSUPPORT`.
 
-**Names.** A host is `localhost`, an IPv4 or IPv6 literal, or `unix:PATH`; any other
-name fails with `ENOSYS` from `resolve`, since `getaddrinfo` blocks. A resolver off the
-loop comes later.
+**Names, in the blocking `connect` only (2026-10-22).** `http::connect` resolves a
+name with `getaddrinfo` in the shim, and tries its addresses in the resolver's order
+within the call's time limit: a lane may block, and goose-acme's requests to Let's
+Encrypt's directory need a name. `connect_start` still fails a name with `ENOSYS` from
+`resolve`, since `getaddrinfo` would block the loop. This replaces "a host is
+`localhost`, a literal, or `unix:PATH`" for the blocking call. The time limit doesn't
+cover the lookup, which `getaddrinfo` can't bound; the system resolver's own timeouts
+apply. Rejected for now: a resolver for the loop, on a lane or with a DNS client of its
+own, which waits until a handler needs a name; and Happy Eyeballs, racing IPv6 against
+IPv4, for a call a lane makes once per connection.
 
 Rejected: a lane that holds every worker's pool (above); the loop reading outbound
 sockets as it reads accepted ones (above); a blocking socket with `SO_RCVTIMEO` and

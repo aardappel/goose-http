@@ -59,7 +59,8 @@ Written 2026-10-19, at the branch's first commit.
     with `READABLE` and `WRITABLE`, then `WAKE` with tag `SOCKET_READY` or `TIMEOUT`,
     and `recv(s, buf)` and `send(s, data)`, which never block.
   - A host is `localhost`, an IPv4 or IPv6 literal, or `unix:PATH`; other names fail
-    with `resolve`'s `ENOSYS`.
+    with `resolve`'s `ENOSYS` (2026-10-19; the blocking `connect` resolves them since
+    2026-10-22, item 4 below).
 - The shim, per platform: `net_connect`, `net_connected`, `net_poll`, `net_port`,
   `net_loop_bind`, and `net_arm` in `shim/net.c`, `shim/kqueue.c`, and
   `shim/net_win.c` (where `net_arm` is `ENOSYS`). `sys.goose` declares them, with
@@ -100,8 +101,10 @@ On 2026-10-19, at Goose `dcc2747`, the pin:
 2. ~~io_uring~~: built 2026-10-22; see "io_uring" below.
 3. The emulated ring and IOCP: the emulation can arm its own epoll instance or kqueue
    as `net_arm` does; IOCP needs `ConnectEx` and a zero-byte `WSARecv` for readability.
-4. Name resolution off the loop: `getaddrinfo` on a lane, or in the blocking `connect`
-   only, where blocking is allowed.
+4. ~~Name resolution in the blocking `connect`~~: built 2026-10-22, with `getaddrinfo`
+   in each shim (`net_resolve`), its addresses tried in order. `test/run_tests.py`
+   passed on macOS, and the branch's runs on Windows and on Linux in WSL passed
+   (2026-10-22). Names on the loop wait until a handler needs one.
 5. Run `test/outbound/outbound_blocking.goose` on Windows. `test/run_tests.py` skips
    `test/outbound/` there for now: `outbound_loop.goose` needs `serve_epoll` and a Unix
    socket, and Windows may refuse a connect to a full backlog with `ECONNREFUSED` where
