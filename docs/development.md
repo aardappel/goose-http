@@ -205,9 +205,9 @@ sudo apt-get install -y cmake libssl-dev openssl
 The benchmarks need more tools ([bench/README.md](../bench/README.md#toolchain)).
 
 On an image-based Fedora such as Bazzite or Silverblue, the tools go in a distrobox,
-which shares the host's kernel and network, so kTLS and perf's counters are the
-host's. Fedora has no `wrk` package: build it from its tag with `make` (it vendors
-LuaJIT) and copy it onto `PATH`. `sudo modprobe tls` and perf's settings
+which shares the host's kernel and network, so perf's counters are the host's.
+Fedora has no `wrk` package: build it from its tag with `make` (it vendors LuaJIT)
+and copy it onto `PATH`. perf's settings
 (`sysctl kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0`) run on the host,
 after each boot; with them, the container's rootless `perf` counts kernel
 instructions and records a CPU. Every step of `scripts/test.sh` passed this way on

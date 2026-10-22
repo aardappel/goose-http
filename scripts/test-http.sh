@@ -9,8 +9,7 @@
 #
 # PORT picks the port (29080): keep it below the kernel's ephemeral range
 # (32768 and up), as for test-echo.sh. WORKERS sets the server's worker
-# count (4). KTLS=1, passed to the server, tests TLS through Linux's kTLS.
-# oha is looked for on PATH and in ~/.cargo/bin.
+# count (4). oha is looked for on PATH and in ~/.cargo/bin.
 #
 # On Windows, in Git Bash, it tests the IOCP build and leaves out the load
 # runs and the fd limit run (docs/development.md, "Windows").
@@ -354,15 +353,11 @@ fi
 # port + 1): TLS 1.3 and ALPN http/1.1 through openssl s_client, responses and
 # a reused connection through curl, a body echoed and a file and /bytes sent
 # larger than the write buffer, the client's checks over TLS and its bad
-# handshakes, and a short h2load run. With KTLS=1 the connections must reach
-# the kernel's record layer, and two KeyUpdates from s_client go through it.
+# handshakes, a short h2load run, and requests after two KeyUpdates from
+# s_client.
 if [ -z "$tls" ]; then
     echo "tls: not served by this loop"
 else
-    if [ "${KTLS:-}" = 1 ]; then
-        grep -q 'TLS on port [0-9]* (kTLS)' "$log" || { cat "$log"; fail "KTLS=1: the server didn't take kTLS"; }
-        ktls_before=$(awk '$1 == "TlsRxSw" { print $2 }' /proc/net/tls_stat)
-    fi
     tlsurl=https://127.0.0.1:$tls
     tlsget() { curl -sSk --http1.1 "$@"; }
     openssl s_client -connect "127.0.0.1:$tls" -alpn http/1.1 </dev/null >"$out" 2>&1 || true
@@ -389,17 +384,12 @@ else
     grep -q 'status codes: 50000 2xx, 0 3xx, 0 4xx, 0 5xx' "$out" || { cat "$out"; fail "h2load tls"; }
     grep -q 'Application protocol: http/1.1' "$out" || { cat "$out"; fail "h2load tls: ALPN wasn't http/1.1"; }
     grep -E '^requests:' "$out"
-    if [ "${KTLS:-}" = 1 ]; then
-        moved=$(($(awk '$1 == "TlsRxSw" { print $2 }' /proc/net/tls_stat) - ktls_before))
-        [ "$moved" -ge 64 ] || fail "KTLS=1: only $moved connections reached the kernel"
-        { printf 'GET /json HTTP/1.1\r\nHost: x\r\n\r\n'; sleep 0.3; echo k; sleep 0.3; echo K; sleep 0.3
-          printf 'GET /json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'; sleep 0.5; } |
-            openssl s_client -connect "127.0.0.1:$tls" -alpn http/1.1 >"$out" 2>&1 || true
-        # The first KEYUPDATE follows the first body on its line.
-        [ "$(grep -o 'KEYUPDATE' "$out" | wc -l | tr -d ' ')" = 2 ] && [ "$(grep -c '^HTTP/1.1 200' "$out")" = 2 ] ||
-            { cat "$out"; fail "KTLS=1: a request after s_client's two KeyUpdates"; }
-        echo "ktls: $moved connections in the kernel, KeyUpdates ok"
-    fi
+    { printf 'GET /json HTTP/1.1\r\nHost: x\r\n\r\n'; sleep 0.3; echo k; sleep 0.3; echo K; sleep 0.3
+      printf 'GET /json HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'; sleep 0.5; } |
+        openssl s_client -connect "127.0.0.1:$tls" -alpn http/1.1 >"$out" 2>&1 || true
+    # The first KEYUPDATE follows the first body on its line.
+    [ "$(grep -o 'KEYUPDATE' "$out" | wc -l | tr -d ' ')" = 2 ] && [ "$(grep -c '^HTTP/1.1 200' "$out")" = 2 ] ||
+        { cat "$out"; fail "tls: a request after s_client's two KeyUpdates"; }
     echo "tls: ok"
 fi
 

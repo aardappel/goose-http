@@ -38,11 +38,6 @@ response behind them. `scripts/test-http.sh` ignores wrk's timeouts for that rea
   directory under `build/test/` failed from a checkout under `/mnt/c` (2026-10-19).
 - Docker Desktop's host network is the Docker VM's, not WSL's loopback. HttpArena's
   readiness probes and cgroup reads use helper containers; published ports reach WSL.
-- The WSL2 kernel builds kTLS as a module (`CONFIG_TLS=m`), unloaded at boot:
-  `/proc/sys/net/ipv4/tcp_available_ulp` is empty until `sudo modprobe tls`, and then
-  lists `tls`. The distributions share one kernel, so Docker Desktop's containers get
-  it too. Load it again after each WSL restart (kernel
-  `6.18.54.1-microsoft-standard-WSL2`, 2026-10-20).
 
 ### WSL from a Windows shell
 

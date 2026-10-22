@@ -89,12 +89,6 @@ for loop in $loops; do
         step "test-autobahn.sh, $loop loop"
         LOOP=$loop "$root/scripts/test-autobahn.sh"
     fi
-    # kTLS where the kernel has it, which only the epoll loop uses.
-    if [ "$loop" = epoll ] && grep -qw tls /proc/sys/net/ipv4/tcp_available_ulp 2>/dev/null; then
-        drain
-        step "test-http.sh, epoll loop with kTLS"
-        KTLS=1 LOOP=epoll "$root/scripts/test-http.sh"
-    fi
     if [ "$loop" = uring ] && [ "$os" = Linux ]; then
         drain
         step "test-http.sh, uring loop over epoll"

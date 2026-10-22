@@ -1,8 +1,8 @@
 // The TLS listener: HTTP/1.1 over TLS 1.3 on TLS_PORT, by default the port
 // + 1, as HttpArena's 8081 is beside 8080, with the PEM certificate chain
 // TLS_CERT and its key TLS_KEY. Without both, or with TLS_PORT=0, no
-// listener serves TLS. KTLS=1 asks for kTLS, and TLS_GROUPS sets the key
-// exchange groups (tls::use_groups), OpenSSL's default otherwise.
+// listener serves TLS. TLS_GROUPS sets the key exchange groups
+// (tls::use_groups), OpenSSL's default otherwise.
 import std;
 import os;
 import http;
@@ -40,12 +40,6 @@ fn tls_listener(cfg: http::Config&, also: u8[>..]&) {
     tls_ctx = ctx;
     cfg.listeners.push(http::Listener { port: p as i32, tls: true });
     format(also, ", TLS on port ", p);
-    // KTLS=1 moves each connection's record layer to the kernel after its
-    // handshake, where Linux has kTLS and the loop is epoll.
-    var ktls: u8[>..] = [];
-    if env("KTLS", ktls) && ktls == "1" {
-        format(also, if tls::use_kernel(ctx) { " (kTLS)" } else { " (no kTLS in this kernel)" });
-    }
 }
 
 thread_fn worker_tls_epoll(cfg: http::Config, ctx: tls::Context) {

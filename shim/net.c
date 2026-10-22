@@ -207,59 +207,6 @@ int64_t net_send(int32_t fd, net_bytes data) {
     return r < 0 ? -errno : r;
 }
 
-/* kTLS's record types (linux/tls.h), for a socket whose record layer the
-   kernel holds (http.tls). */
-#define NET_SOL_TLS 282
-#define NET_TLS_SET_RECORD_TYPE 1
-#define NET_TLS_GET_RECORD_TYPE 2
-
-/* The type of the record net_recv_record last gave, per thread: 23 for
-   data. */
-static __thread int64_t net_record_kind = 23;
-
-int64_t net_record_type(void) { return net_record_kind; }
-
-/* A receive of one record that isn't data, after recv failed with EIO: its
-   bytes, and its type for net_record_type. */
-int64_t net_recv_record(int32_t fd, net_bytes buf) {
-    char control[CMSG_SPACE(sizeof(unsigned char))];
-    struct iovec iov = { buf.data, (size_t)buf.len };
-    struct msghdr m;
-    memset(&m, 0, sizeof m);
-    m.msg_iov = &iov;
-    m.msg_iovlen = 1;
-    m.msg_control = control;
-    m.msg_controllen = sizeof control;
-    ssize_t n = recvmsg(fd, &m, 0);
-    if (n < 0) return -errno;
-    net_record_kind = 23;
-    for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c))
-        if (c->cmsg_level == NET_SOL_TLS && c->cmsg_type == NET_TLS_GET_RECORD_TYPE)
-            net_record_kind = *(unsigned char *)CMSG_DATA(c);
-    return n;
-}
-
-/* Sends data through the kernel as one record of type kind: an alert or a
-   handshake message. */
-int64_t net_send_record(int32_t fd, int64_t kind, net_bytes data) {
-    char control[CMSG_SPACE(sizeof(unsigned char))];
-    struct iovec iov = { data.data, (size_t)data.len };
-    struct msghdr m;
-    memset(&m, 0, sizeof m);
-    memset(control, 0, sizeof control);
-    m.msg_iov = &iov;
-    m.msg_iovlen = 1;
-    m.msg_control = control;
-    m.msg_controllen = sizeof control;
-    struct cmsghdr *c = CMSG_FIRSTHDR(&m);
-    c->cmsg_level = NET_SOL_TLS;
-    c->cmsg_type = NET_TLS_SET_RECORD_TYPE;
-    c->cmsg_len = CMSG_LEN(sizeof(unsigned char));
-    *(unsigned char *)CMSG_DATA(c) = (unsigned char)kind;
-    ssize_t r = sendmsg(fd, &m, MSG_NOSIGNAL);
-    return r < 0 ? -errno : r;
-}
-
 int32_t net_shutdown(int32_t fd, int32_t how) {
     return shutdown(fd, how) < 0 ? -errno : 0;
 }

@@ -472,8 +472,7 @@ Decided 2026-10-19, task 014.
 
 TLS is [goose-tls](https://github.com/kaitk/goose-tls), a package of its own: a Goose
 API over OpenSSL 3 with opaque handles, whose connections take the bytes the program
-read and give back the bytes to send, through memory BIOs, and which moves a
-connection's record layer to the kernel on Linux (kTLS) after the handshake. `http`
+read and give back the bytes to send. `http`
 imports it only from its module `http.tls` (`tls.goose`), so only a program that
 imports `http.tls` declares goose-tls in its root file and builds with OpenSSL and
 CMake; `test/http/no_tls.goose` builds without it, and `test/tls/undeclared.goose`
@@ -490,8 +489,7 @@ called, and `http.tls` adds a `TlsServer` and its own overloads. No function poi
 needed, and a program without TLS compiles none of it.
 
 Rejected: TLS in this repository, which would make every program link OpenSSL; TLS
-written in Goose, which constant-time crypto and X.509 put out of scope, and which
-HttpArena's rules forbid (they ask for a standard TLS stack); and, among C libraries,
+written in Goose, which constant-time crypto and X.509 put out of scope; and, among C libraries,
 BoringSSL (no stable API or releases), rustls-ffi (a Rust toolchain in the build), and
 BearSSL (TLS 1.2 at most, where HttpArena checks for 1.3). goose-tls's own
 [decisions](https://github.com/kaitk/goose-tls/blob/main/docs/decisions.md) record
@@ -521,21 +519,19 @@ The names were agreed on 2026-10-19: `Config.tls` and `Listener.tls`,
 io_uring. The benchmark server serves TLS on its port + 1 (`TLS_PORT`), only when
 `TLS_CERT` and `TLS_KEY` are set.
 
-## kTLS is the context's choice, made by the program
+## No kTLS
 
-Decided 2026-10-20, task 014.02.
+Decided 2026-10-22, with goose-tls's task 007.
 
-A program asks for kTLS with goose-tls's `tls::use_kernel(ctx)` on the context it
-gives its workers, before the first accept. goose-http has no setting of its own: the
-epoll loop calls `tls::to_kernel` once a connection's handshake is done, and a context
-that didn't ask settles it to user space on that first call. The switch is tried in
-`tls_recv`, which the loop calls only when everything sealed is on the socket, the
-condition for the kernel to take sending, so the loop needs no new state. After it,
-the connection reads and writes plaintext on its socket, and the kernel's records
-that aren't data (close_notify, alerts, KeyUpdates) go through `recvmsg` and
-`sendmsg` in the shim. The io_uring loop doesn't switch yet: its connections stay in
-user space under the same context. Rejected: a `Config` field, which would duplicate
-the context's choice, and a check per request rather than per connection.
+The loops keep every TLS connection's record layer in user space. goose-tls retires
+kTLS, its `tls::use_kernel` and the calls after it, and goose-http drops what used
+them: the switch in `tls_recv`, the receive of the kernel's non-data records, the
+close_notify sent as an alert record, the shim's `recvmsg` and `sendmsg` for them, and
+the benchmark server's `KTLS=1`. On the Ryzen 5 9600X, kTLS served small `/json`
+responses about 10% faster but 16 KB ones 44% slower (task 014.02), and it needed a
+second path through the epoll loop that the io_uring loop never took. It replaces
+"kTLS is the context's choice, made by the program" (2026-10-20). goose-tls's
+decisions record the reasons in full.
 
 ## HttpArena's entry uses the Rust entries' key exchange
 
