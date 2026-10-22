@@ -2,6 +2,21 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
+## v0.5.4 (2026-10-22)
+
+A blocking HTTP/1.1 and HTTPS client. Goose `v2026.3`, goose-hash `v0.0.4`, goose-tls
+`v0.0.5`, and goose-compress `v0.1.1`.
+
+Added:
+
+- The module `http.client`: HTTP/1.1 requests, plain or over TLS, on the blocking
+  socket, for a lane's thread or a program without a loop. A session keeps its
+  connection for the next request to the same host; `http::get`, `post`, `put`,
+  `patch`, `delete`, and `request` take a block that adds header fields, a bearer
+  token, or a body, `http::json` for a JSON one. It decodes chunked bodies, and
+  doesn't follow redirects, keep cookies, or decode compressed bodies. A program that
+  imports it declares goose-tls (`docs/api.md`, "An HTTP client").
+
 ## v0.5.3 (2026-10-22)
 
 A TLS connection's context chosen per connection, for ACME's TLS-ALPN-01. Goose

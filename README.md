@@ -23,7 +23,7 @@ generation from OpenAPI, see [goose-rest](https://github.com/kaitk/goose-rest).
 | 🟢 | HTTP/1.1 | Keep-alive, pipelining, chunked bodies, trailers, and `Expect: 100-continue`. Also supports HTTP/1.0. |
 | 🟢 | Compression | Files compressed with Brotli, Zstandard, or gzip; on-the-fly gzip, deflate, and Zstandard with [goose-compress](https://github.com/kaitk/goose-compress). |
 | 🟡 | HTTP/2 | h2c, HTTP/2 over TCP with prior knowledge, on a port of its own ([API](docs/api.md#several-ports-and-h2c)), and h2 over TLS, chosen by ALPN ([API](docs/api.md#https)), on Linux and macOS. Passes h2spec both ways. Not yet on Windows. |
-| 🟡 | TLS | HTTPS: HTTP/1.1 and h2 over TLS 1.3 on both loops on Linux and macOS, on one port, as ALPN chooses, from the module `http.tls` with [goose-tls](https://github.com/kaitk/goose-tls)'s server in Goose over OpenSSL 3's libcrypto ([API](docs/api.md#https)). Not yet on Windows. |
+| 🟡 | TLS | HTTPS: HTTP/1.1 and h2 over TLS 1.3 on both loops on Linux and macOS, on one port, as ALPN chooses, from the module `http.tls` with [goose-tls](https://github.com/kaitk/goose-tls)'s server in Goose over OpenSSL 3's libcrypto, about 2.9 KB per idle connection ([API](docs/api.md#https)). A program can choose each connection's context at its ClientHello, as for ACME's TLS-ALPN-01. Not yet on Windows. |
 | 🟢 | WebSocket | RFC 6455: text and binary messages, fragments, ping, and close, in the optional `http.websocket` module, with SHA-1 from [goose-hash](https://github.com/kaitk/goose-hash) ([API](docs/api.md#websocket)). Passes Autobahn's test suite. No extensions, such as permessage-deflate, and not over HTTP/2. |
 | 🟡 | Outbound connections | TCP and Unix sockets to other servers, such as a database: blocking calls with time limits for a lane's thread, and non-blocking ones on the epoll, kqueue, and io_uring loops, where the exchange waits for the socket ([API](docs/api.md#outbound-connections)). Not yet on the emulated ring or IOCP. The blocking `connect` resolves host names; the loop's `connect_start` doesn't yet. |
 | 🟡 | HTTP client | HTTP/1.1 and HTTPS requests from a lane's thread or a program without a loop, with a kept connection, fields, and a JSON body, in the optional `http.client` module ([API](docs/api.md#an-http-client)). Blocking only; needs goose-tls, so not yet on Windows. |
@@ -38,7 +38,7 @@ generation from OpenAPI, see [goose-rest](https://github.com/kaitk/goose-rest).
 
 ## What it provides
 
-The latest tag, `v0.5.3`, provides all of this on every platform above:
+The latest tag, `v0.5.4`, provides all of this on every platform above:
 
 - A strict parser that guards against request smuggling and returns 414, 431, 501, and
   505 where appropriate; header fields, path, query, and percent-decoding support.
@@ -54,8 +54,8 @@ The latest tag, `v0.5.3`, provides all of this on every platform above:
 - Client addresses, `Forwarded` headers from trusted proxies, IPv6, dual-stack, and, on
   Linux and macOS, Unix sockets.
 
-The package does not include an HTTP client or framework features such as CORS,
-sessions, and middleware (see [goose-rest](https://github.com/kaitk/goose-rest)).
+The package does not include framework features such as CORS, sessions, and
+middleware (see [goose-rest](https://github.com/kaitk/goose-rest)).
 
 ## Quick start
 
@@ -71,7 +71,7 @@ a program also needs a C compiler and, on Linux, liburing:
 Save this as `hello.goose`:
 
 ```rust
-import http from "github.com/kaitk/goose-http@v0.5.3";
+import http from "github.com/kaitk/goose-http@v0.5.4";
 
 thread_fn worker(cfg: http::Config) {
     let e = http::serve(cfg) { req, body, out =>
@@ -202,8 +202,8 @@ every server and both Goose event loops: [docs/benchmarks.md](docs/benchmarks.md
 ### TLS
 
 HttpArena's json-tls and 8gbit against its Rust entries, on the same desktop on
-2026-10-20, with TLS 1.3 from [goose-tls](https://github.com/kaitk/goose-tls) over
-OpenSSL 3.5:
+2026-10-20, with TLS 1.3 from [goose-tls](https://github.com/kaitk/goose-tls)
+`v0.0.2` (json-tls) and `v0.0.1` (8gbit) over OpenSSL 3.5's libssl:
 
 | Workload | goose-http | Best Rust entry | |
 |---|---:|---:|---|
@@ -213,7 +213,9 @@ OpenSSL 3.5:
 
 \* sark, which HttpArena disables, served 215k.
 
-The memory is OpenSSL's, about 30 KB per connection, which goose-tls plans to cut.
+The memory was libssl's, about 30 KB per connection. goose-tls's own server, since
+`v0.0.4` (goose-http `v0.5.1`), holds 2.9 KB per idle connection, and hasn't been
+measured here yet.
 
 ## What isn't Goose
 
