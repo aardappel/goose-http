@@ -3,7 +3,7 @@
 // whose h2 over TLS is still to come.
 import std;
 import http from "../../";
-import tls from "github.com/kaitk/goose-tls@v0.0.3";
+import tls from "github.com/kaitk/goose-tls@v0.0.4";
 import http.tls;
 
 fn main() {

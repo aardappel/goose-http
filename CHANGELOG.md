@@ -14,6 +14,14 @@ Added:
 - `http::close_file(f)`, which closes a `File` that `open_file` opened and the
   program won't serve, the last of `open_precompressed`'s parts to be public.
 
+Changed:
+
+- goose-tls `v0.0.4`: the TLS server is goose-tls's own TLS 1.3 server in Goose over
+  libcrypto, 2.9 KB per idle connection where libssl held 28.5 KB, with session
+  tickets; a client offering ALPN without `http/1.1` now fails with
+  `no_application_protocol`. The kTLS handoff is gone, with the benchmark server's
+  `KTLS=1`.
+
 Fixed:
 
 - On io_uring, an h2 stream reset while it waits on `http::wait_socket`, or answered in
