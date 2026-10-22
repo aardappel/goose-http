@@ -132,8 +132,116 @@ Checked on macOS, at Goose v2026.3:
   `ws_upgrade` grew from 1,446 to 1,589, taking in `base64::encode` and SHA-1's
   rounds, once a connection. `http::upgrade`, with one caller left, the server's
   `/upgrade`, now has its `"echo"` folded in, which takes 3 instructions from each of
-  that route's call sites in `answer` and `call`; no other instruction of the request
-  path changed.
+  that route's call sites in `answer` and `call`. The rest of the request path is the
+  same instructions, with a few registers renamed in `call`.
+
+## The gather pool
+
+Item 4, a design for the maintainer; nothing here is built.
+
+### What each side has now
+
+`http::gather` keeps a body that didn't come with its head in a run of `gathered`, a
+`reusable[]` global and so each worker's own, which only a program that calls `gather`
+or `http.websocket` has. A run starts at 16 KB, or the first piece, and doubles as the
+body grows; a body past `limit` gets 413. Nothing bounds the pool as a whole: a worker
+can hold `max_conns` bodies of `limit` bytes. WebSocket keeps a frame not yet whole and
+a fragmented message in runs of the same pool.
+
+goose-rest keeps its own `reusable[]` spill, a local of each worker's `rest::serve`, for
+three kinds of run (its `runtime.goose`):
+
+- a body that `rest::body` gathers: a run of the rebuilt head and the body's exact size
+  for a Content-Length, reserved at the head, which never grows or moves; for a chunked
+  body, 16 KB, doubling;
+- a reply that a lane sends in pieces, collected (`collect_reply`), whose length and
+  capacity it keeps in the run's first 16 bytes, to save its connection slot the bytes;
+- what an exchange's middleware kept for a later answer, about 100 bytes
+  (`stash_kept`).
+
+A `Budget` bounds the spill's length, its high-water mark, which the worker keeps for
+its life: `rest::Config.gather_budget`, 64 MB by default. A run that would take the
+spill past it is refused, and goose-rest answers the request 503 with `Retry-After: 1`,
+at the head for a Content-Length, or a reply 502. To know whether a run fits, the
+`Budget` mirrors every run in use, its middleware's included, and predicts where
+`alloc_slice` and `realloc_slice` would put the next one, which spec §5.4 defines as the
+first free span in index order (`track`, `untrack`, `spill_end`, `free_at`,
+`grown_end`, `grow_run`): a scan of the runs in use for each run placed.
+
+### Proposal
+
+Make the pool's runs a public part, with an optional budget inside the pool, and keep
+`gather` and `Gather` as the convenience over them. goose-rest's three kinds of run
+then go in `gathered`, and it drops its spill and the functions above.
+
+```rust
+// Each worker's, before its loop: the most bytes the pool may reach; 0, the default, for none.
+fn gather_budget(bytes: i64)
+// A run of exactly n bytes; with checked, nothing and false where it would pass the budget.
+fn gather_run(n: i64, checked: bool = false) -> i64, i64, bool          // at, cap, ok
+// The run at, of cap bytes, made to hold n: as it is, doubled, or exactly n where doubling
+// would pass the budget; with checked, unchanged and false where n would.
+fn gather_grow(at: i64, cap: i64, n: i64, checked: bool = false) -> i64, i64, bool
+fn gather_free(at: i64, cap: i64)
+```
+
+The bytes are `http::gathered[at..at + n]`, as `ws_take` reads them now. `Gather`'s
+functions, `gather_head`, `gather_piece`, and `release_gather`, become compositions of
+these, and `gather_head` reserves a Content-Length body's exact run at the head when a
+budget is set. `gather` answers a refusal 503 with `Retry-After: 1` and closes, as
+goose-rest does; a framework calls the parts and answers in its own shape.
+
+- **The budget bounds the pool's length**, as goose-rest's does, since that is what the
+  worker keeps. The pool mirrors its runs, as `Budget.runs` does, only while a budget
+  is set: a program that gathers without one pays a branch per run placed or freed.
+- **Checked or not is the caller's choice per run.** A run that may be refused, a body
+  or a collected reply, is checked; one that mustn't fail, a middleware's kept fields
+  or WebSocket's partial frame, isn't, but still counts toward the length the next
+  checked run sees.
+- **The parts take a run's place, `at` and `cap`, not a `Gather`**, so a framework
+  stores a run in as few bytes as it likes, as goose-rest does for a reply.
+
+Who gains:
+
+- goose-rest: one arena per worker, one high-water mark, and one budget, its
+  WebSocket's runs included once it has WebSocket. The functions above and its
+  `gather_head`, `gather_piece`, and `run_size` are about 100 lines, with comments.
+- Programs that call `http::gather`: a Content-Length body's run stops at its length,
+  where today a 520 KB body doubles to a 1 MB run; under a budget it is reserved whole
+  at the head and copied once. And an optional budget bounds what gathered bodies and
+  WebSocket's runs may take of a worker, which today only `max_conns` times `limit`
+  bounds.
+- Programs that never call `gather` or `http.websocket`: nothing changes. Goose
+  compiles a function only where it's called, and the globals only those functions
+  use, `gathered`, the budget, and its mirror, aren't in the program.
+
+### Open questions
+
+1. **Bound the length, or the bytes in use?** The bytes in use need one counter, with
+   no mirror and no scan, but fragmentation can take the length past the budget. The
+   length is what memory follows, and goose-rest chose it. Recommended: the length.
+2. **Could Goose tell where a slice pool would place a run**, or expose its free
+   spans? Either removes the mirror and its scan. A feature request for
+   `docs/goose-findings.md`, if the maintainer wants one.
+3. **Where the budget is set.** `gather_budget(bytes)` in each worker before its
+   loop, since a worker's globals are its own, rather than a `Config` field read by
+   code the loop doesn't call (the rule against shared fields for one feature), or a
+   budget passed to each call, as goose-rest's `Budget&` is now. Recommended: the
+   function.
+4. **Exact runs at the head without a budget.** A head alone would make the worker
+   reserve, and Goose fill with zeros, a whole announced body: `max_conns` heads could
+   reserve `max_conns` times `limit`. Recommended: exact runs at the head only under a
+   budget; without one, growth that doubles but stops at the announced length.
+5. **Are WebSocket's runs checked?** `WebSocket.limit` bounds them per connection.
+   Checked, a refused frame would need a close code, 1011 or 1009. Recommended:
+   unchecked but counted.
+6. **The convenience's refusal.** 503 with `Retry-After: 1` and a close, as goose-rest
+   answers, or a 503 that keeps the connection while the rest is under
+   `Config.max_drain`.
+7. **The loops' own spill stays apart.** The epoll and io_uring loops keep a
+   connection's held bytes and queued output in a `reusable[]` local of the loop,
+   which a handler can't reach without a field in `Reply`. Recommended: keep it apart;
+   the pool is for what handlers hold.
 
 ## Acceptance criteria
 
@@ -143,6 +251,6 @@ Checked on macOS, at Goose v2026.3:
       `test/websocket/` and `docs/api.md`; the 101, the refusals, and the frames
       unchanged byte for byte, and the request path's generated code unchanged
 - [x] Item 3 done, or the reason it waits recorded here
-- [ ] Item 4's design below, with its open questions
+- [x] Item 4's design, with its open questions
 - [ ] `scripts/test.sh` passes on macOS
 - [ ] Items 5 to 11 done or decided by the maintainer
