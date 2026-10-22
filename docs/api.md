@@ -849,7 +849,7 @@ goose-tls, which its root file declares, and it builds with CMake and OpenSSL's 
 
 ```rust
 import http from "github.com/kaitk/goose-http@<tag>";
-import tls from "github.com/kaitk/goose-tls@v0.0.4";
+import tls from "github.com/kaitk/goose-tls@v0.0.5";
 import http.tls;
 
 thread_fn worker(cfg: http::Config, ctx: tls::Context) {

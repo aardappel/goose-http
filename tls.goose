@@ -4,7 +4,7 @@
 // declares at the tag this file names:
 //
 //   import http from "github.com/kaitk/goose-http@<tag>";
-//   import tls from "github.com/kaitk/goose-tls@v0.0.4";
+//   import tls from "github.com/kaitk/goose-tls@v0.0.5";
 //   import http.tls;
 //
 // The listeners with Listener.tls (or Config.tls for Config.port's) serve
@@ -24,7 +24,7 @@
 namespace http;
 
 import std;
-import tls from "github.com/kaitk/goose-tls@v0.0.4";
+import tls from "github.com/kaitk/goose-tls@v0.0.5";
 import sys;
 import epoll;
 
