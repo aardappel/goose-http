@@ -205,11 +205,13 @@ the same way.
 
 The optional `http.websocket` module speaks RFC 6455 over `http::upgrade`'s raw bytes,
 so the loops know nothing of it ([decisions](decisions.md#websocket-is-an-optional-module-over-upgrade)).
-`ws_upgrade` checks the request and writes the 101 with `Sec-WebSocket-Accept`, the
-base64 of the key's SHA-1 from goose-hash, for each connection. A program that doesn't
-import the module needs neither goose-hash nor its C.
+`ws_upgrade` checks the request with `ws_check` and writes the 101 with `ws_switch`,
+whose `Sec-WebSocket-Accept` is the base64 of the key's SHA-1 from goose-hash, computed
+for each connection. A program that doesn't import the module needs neither goose-hash
+nor its C.
 
-`ws_read` reads the frames each `BODY` completes in one pass, unmasking each payload
+`ws_read` hands each `BODY`'s bytes to `ws_take`, which reads the frames they complete
+in one pass, unmasking each payload
 onto the worker's data stack, so 16 frames that arrive together are 16 calls of the
 program's block and one write. A frame split across reads, and the fragments of a
 message, wait in runs of the worker's pool that `http::gather` uses, held in the
@@ -219,7 +221,7 @@ before its payload arrives, so a frame past `WebSocket.limit` closes the connect
 with 1009 without being buffered. Text is checked as UTF-8 a fragment at a time, so bad
 text in an early fragment fails the connection before the rest arrives; within one
 frame, the check runs once the frame is whole. Pings get their pong, and a Close its
-Close, inside `ws_read`, without the program. No extension is negotiated, and an
+Close, inside `ws_take`, without the program. No extension is negotiated, and an
 HTTP/2 stream has no WebSocket (RFC 8441). A TLS listener carries it as it carries any
 upgraded bytes, so `wss://` needs nothing of its own.
 

@@ -268,12 +268,33 @@ thread_fn worker(cfg: http::Config) {
   `http::ws_upgrade(req, out, protocol)` names a subprotocol in
   `Sec-WebSocket-Protocol`: one of those the client offered, which
   `http::field_of(req, "sec-websocket-protocol")` gives.
+- `ws_upgrade` is two parts, for a program that answers a refusal in its own shape.
+  `http::ws_check(req, out.minor)` answers nothing and returns the status, `ws_upgrade`'s
+  101, 426, 400, or 501; for 101, the request's `Sec-WebSocket-Key`; and otherwise the
+  fields the refusal must carry, whole lines ending in `\r\n`, which a 426 needs.
+  `http::ws_switch(out, key, protocol)` then writes the 101 and switches the
+  connection:
+
+  ```rust
+  let status, key, fields = http::ws_check(req, out.minor);
+  guard status == 101 else {
+      http::start(out, status);
+      out.buf.append(fields);
+      http::finish(out, http::JSON, "{\"error\":\"no_websocket\"}");
+      return;
+  }
+  http::ws_switch(out, key, "");
+  ```
+
 - `http::ws_read(ev, st.ws, out) { op, data, o => }` with every later event: at `BODY`
   it reads each frame the bytes complete, all those that arrived together in one call,
   and calls the block with each whole message, `op` `http::WS_TEXT` or
   `http::WS_BINARY`. A message in fragments comes joined. `data` lasts until the block
   returns. At `CLOSED` it gives back what `st.ws` holds; other events, such as `WAKE`,
   are the handler's.
+- `ws_read` is `http::ws_take(bytes, st.ws, out) { op, data, o => }` at `BODY`, which
+  takes the connection's next bytes from wherever the program holds them, and
+  `http::ws_release(st.ws)` at `CLOSED`.
 - Without the program, a ping gets its pong, and the client's Close gets a Close with
   the same code, after which the connection closes. A frame the protocol forbids
   closes it with 1002 (unmasked, an RSV bit set, an unknown opcode, a control frame in

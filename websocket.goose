@@ -15,6 +15,10 @@
 //       http::ws_read(ev, st.ws, out) { op, data, o => http::ws_send(o, op, data); };
 //   }
 //
+// ws_upgrade is ws_check's verdict and ws_switch's 101, and ws_read is
+// ws_take at BODY and ws_release at CLOSED, for a program that answers a
+// refusal itself or holds the bytes outside an Event.
+//
 // No extension is negotiated, so a frame with an RSV bit set fails the
 // connection, as permessage-deflate's would.
 namespace http;
@@ -24,7 +28,7 @@ import base64;
 import hash from "github.com/kaitk/goose-hash@v0.0.4";
 import message;
 
-// A message's opcode, as ws_read gives it and ws_send takes it.
+// A message's opcode, as ws_take gives it and ws_send takes it.
 let WS_TEXT: u8 = 1;
 let WS_BINARY: u8 = 2;
 
@@ -61,43 +65,55 @@ struct WebSocket {
     done: bool = false,
 }
 
-// Answers a request to open a WebSocket (§4.2): 101 with Sec-WebSocket-Accept,
-// computed for this request alone, and switches the connection to frames,
-// which ws_read then takes, and returns true. With protocol, the 101 names it
-// in Sec-WebSocket-Protocol: one of those the client offered in its own
-// Sec-WebSocket-Protocol field, which field_of gives. Otherwise answers 426
-// with Upgrade: websocket to a request that doesn't ask for one, as a plain
-// GET; 426 with Sec-WebSocket-Version: 13 for another version; 400 for a
-// method other than GET or a key that isn't 16 bytes in base64; and 501 on an
-// HTTP/2 stream, as upgrade does.
+// Answers a request to open a WebSocket (§4.2) as ws_check judges it: 101
+// from ws_switch, after which the connection carries frames, and true; or
+// the status ws_check gives, with its fields, and false. With protocol, the
+// 101 names it in Sec-WebSocket-Protocol: one of those the client offered in
+// its own Sec-WebSocket-Protocol field, which field_of gives. A protocol
+// that is_field refuses gets 400.
 fn ws_upgrade(req: const Request&, out: Reply, protocol: const u8[:] = "") -> bool {
-    if out.minor == H2_MINOR {
-        upgrade(out, "websocket");
+    var status, key, fields = ws_check(req, out.minor);
+    if status == 101 && protocol.len > 0 && !is_field("Sec-WebSocket-Protocol", protocol) { status = 400; }
+    guard status == 101 else {
+        start(out, status);
+        out.buf.append(fields);
+        finish(out, NO_TYPE, "");
         return false;
     }
+    ws_switch(out, key, protocol);
+    return true;
+}
+
+// Whether req may open a WebSocket (§4.2.1), on a connection whose
+// Reply.minor is minor, without answering it. Returns 101 and req's
+// Sec-WebSocket-Key, for ws_switch; or the status to refuse it with, and the
+// fields that refusal carries, whole lines each ending in CRLF: 426 with
+// "Connection: Upgrade" and "Upgrade: websocket" for a request that doesn't
+// ask for one, as a plain GET; 426 with "Sec-WebSocket-Version: 13" for
+// another version; 400 with none for a method other than GET or a key that
+// isn't 16 bytes in base64; and 501 with none on an HTTP/2 stream
+// (H2_MINOR), which has no upgrade.
+fn ws_check(req: const Request&, minor: i32) -> i32, const u8[:], const u8[:] {
+    guard minor != H2_MINOR else { return 501, "", ""; }
     var asked = false;
     each_split(upgrade_of(req), ',') { if eq_fold(trim(it), "websocket") { asked = true; } };
-    guard asked else {
-        start(out, 426);
-        out.buf.append("Connection: Upgrade\r\nUpgrade: websocket\r\n");
-        finish(out, NO_TYPE, "");
-        return false;
-    }
+    guard asked else { return 426, "", "Connection: Upgrade\r\nUpgrade: websocket\r\n"; }
     let version, _ = field_of(req, "sec-websocket-version");
-    guard version == "13" else {
-        start(out, 426);
-        out.buf.append("Sec-WebSocket-Version: 13\r\n");
-        finish(out, NO_TYPE, "");
-        return false;
-    }
+    guard version == "13" else { return 426, "", "Sec-WebSocket-Version: 13\r\n"; }
     let key, _ = field_of(req, "sec-websocket-key");
     var nonce: u8[>..] = [];
-    guard req.method == "GET" && key.len == 24 && base64::decode(nonce, key) && nonce.len == 16 &&
-          (protocol.len == 0 || is_field("Sec-WebSocket-Protocol", protocol)) else {
-        start(out, 400);
-        finish(out, NO_TYPE, "");
-        return false;
+    guard req.method == "GET" && key.len == 24 && base64::decode(nonce, key) && nonce.len == 16 else {
+        return 400, "", "";
     }
+    return 101, key, "";
+}
+
+// Answers a request that ws_check gave 101, with key: 101 with
+// Sec-WebSocket-Accept, computed for this request alone, and switches the
+// connection to frames, which ws_take then reads. With protocol, the 101
+// names it in Sec-WebSocket-Protocol, unless is_field refuses it, as field
+// does.
+fn ws_switch(out: Reply, key: const u8[:], protocol: const u8[:] = "") {
     start(out, 101);
     out.buf.append("Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: ");
     out.buf.append(ws_accept(key));
@@ -105,7 +121,6 @@ fn ws_upgrade(req: const Request&, out: Reply, protocol: const u8[:] = "") -> bo
     if protocol.len > 0 { field(out, "Sec-WebSocket-Protocol", protocol); }
     out.buf.append("\r\n");
     switched(out);
-    return true;
 }
 
 // Sec-WebSocket-Accept's value for key: the base64 of the SHA-1 of the key
@@ -122,28 +137,34 @@ fn ws_accept(key: const u8[:]) -> u8[..28] {
     return accept;
 }
 
-// Takes an upgraded connection's events after REQUEST: at BODY, reads every
-// frame the bytes complete, those that came together in one pass, and calls
-// F(op, data, out) with each whole message, WS_TEXT or WS_BINARY. A message
-// in fragments is joined first; data lasts until F returns. A ping gets its
-// pong, and a Close its Close, after which the connection closes. A frame
-// the protocol forbids closes it with 1002, text that isn't UTF-8 with 1007,
-// and a message longer than ws.limit with 1009, each sent in a Close first.
-// At CLOSED, gives back what ws holds; other events are the handler's.
+// Takes an upgraded connection's events after REQUEST: ws_take at BODY, and
+// ws_release at CLOSED; other events are the handler's.
 fn ws_read<F>(ev: Event, ws: WebSocket&, out: Reply) {
     if ev.kind == CLOSED {
         ws_release(ws);
-        return;
+    } else if ev.kind == BODY {
+        ws_take(ev.data, ws, out) { op, data, o => F(op, data, o); };
     }
-    guard ev.kind == BODY && !ws.done else { return; }
+}
+
+// Takes bytes, the next a connection that ws_switch switched has sent:
+// reads every frame they complete, those that came together in one pass,
+// and calls F(op, data, out) with each whole message, WS_TEXT or WS_BINARY.
+// A message in fragments is joined first; data lasts until F returns. A ping
+// gets its pong, and a Close its Close, after which the connection closes. A
+// frame the protocol forbids closes it with 1002, text that isn't UTF-8 with
+// 1007, and a message longer than ws.limit with 1009, each sent in a Close
+// first. What ws holds between calls ws_release gives back.
+fn ws_take<F>(bytes: const u8[:], ws: WebSocket&, out: Reply) {
+    guard !ws.done else { return; }
     // The unmasked payload of each frame, on the worker's data stack.
     var payload: u8[>..] = [];
     guard ws.pending.len > 0 else {
-        let used = ws_frames(ev.data, ws, out, payload) { op, data, o => F(op, data, o); };
-        if !ws.done && used < ev.data.len { gather_piece(ws.pending, ev.data[used..]); }
+        let used = ws_frames(bytes, ws, out, payload) { op, data, o => F(op, data, o); };
+        if !ws.done && used < bytes.len { gather_piece(ws.pending, bytes[used..]); }
         return;
     }
-    gather_piece(ws.pending, ev.data);
+    gather_piece(ws.pending, bytes);
     let run = gathered[ws.pending.at..ws.pending.at + ws.pending.len];
     let used = ws_frames(run, ws, out, payload) { op, data, o => F(op, data, o); };
     guard !ws.done else { return; }
@@ -155,7 +176,7 @@ fn ws_read<F>(ev: Event, ws: WebSocket&, out: Reply) {
     }
 }
 
-// Reads the whole frames at the start of src, as ws_read describes, and
+// Reads the whole frames at the start of src, as ws_take describes, and
 // returns how many bytes they took.
 fn ws_frames<F>(src: const u8[:], ws: WebSocket&, out: Reply, payload: u8[>..]&) -> i64 {
     var at = 0;
@@ -240,7 +261,7 @@ fn ws_frames<F>(src: const u8[:], ws: WebSocket&, out: Reply, payload: u8[>..]&)
 }
 
 // Sends a message, op WS_TEXT or WS_BINARY, in one frame. Text must be UTF-8.
-// Nothing is sent on a connection that ws_upgrade didn't switch, or after the
+// Nothing is sent on a connection that ws_switch didn't switch, or after the
 // connection has closed.
 fn ws_send(out: Reply, op: u8, data: const u8[:]) { ws_frame(out, op, data); }
 
@@ -257,8 +278,8 @@ fn ws_close(out: Reply, ws: WebSocket&, code: i32 = WS_NORMAL, reason: const u8[
     ws.closing = true;
 }
 
-// Gives back what ws holds in the worker's pool. ws_read does at CLOSED, and
-// when it closes the connection itself.
+// Gives back what ws holds in the worker's pool: call it at CLOSED, as
+// ws_read does. ws_take does when it closes the connection itself.
 fn ws_release(ws: WebSocket&) {
     release_gather(ws.pending);
     release_gather(ws.message);

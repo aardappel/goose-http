@@ -18,15 +18,15 @@ namespace privacy, so any function in `http` can be called; a part is public her
 smallest change: usually the part exposed, with the convenience a short composition of
 it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
 
-1. [ ] **`ws_upgrade(req, out, protocol)` decides and writes.** Its 426s, 400, and
+1. [x] **`ws_upgrade(req, out, protocol)` decides and writes.** Its 426s, 400, and
    501 are the package's, so a framework can't answer in its own error shape.
    Change: `ws_check(req, minor)`, the verdict, with the key a 101 needs and the
    fields a refusal must carry, and `ws_switch(out, key, protocol)`, the 101 and the
-   switch to frames. `ws_upgrade` composes them.
-2. [ ] **`ws_read(ev, ws, out)` takes an `Event`** for its `kind` and `data`. A
+   switch to frames. `ws_upgrade` composes them. Done ("WebSocket's parts" below).
+2. [x] **`ws_read(ev, ws, out)` takes an `Event`** for its `kind` and `data`. A
    framework's handler holds the bytes in a context of its own. Change:
    `ws_take(bytes, ws, out)`, beside `ws_release` for `CLOSED`; `ws_read` calls one or
-   the other.
+   the other. Done.
 3. [ ] **`body_within(taken, ev, out, limit)` writes its own 413**, and takes an
    `Event` for its kind, data, and the request's length.
 4. [ ] **`gather(ev, g, out, limit)` and its pool.** It takes an `Event`, writes 413
@@ -82,11 +82,52 @@ Checked and left as they are:
   worker's, reached through the `Compressed` a handler holds, as goose-rest's
   `compression.goose` does.
 
+## WebSocket's parts
+
+Items 1 and 2, in `websocket.goose`:
+
+```rust
+fn ws_check(req: const Request&, minor: i32) -> i32, const u8[:], const u8[:]  // status, key, fields
+fn ws_switch(out: Reply, key: const u8[:], protocol: const u8[:] = "")
+fn ws_take<F>(bytes: const u8[:], ws: WebSocket&, out: Reply)                 // F(op, data, out)
+```
+
+`ws_check` takes `out.minor` rather than the `Reply`, since it writes nothing and needs
+only to know an h2 stream. A 426 needs one of two fields, so the verdict returns them
+as whole lines: a status alone couldn't tell `Upgrade: websocket` from
+`Sec-WebSocket-Version: 13`. The subprotocol is the program's choice, not the
+request's, so `ws_check` doesn't take it: `ws_upgrade` turns a 101 into 400 for one
+`is_field` refuses, as before, and `ws_switch` leaves such a protocol out, as `field`
+does. `ws_take` keeps `ws_read`'s order, the bytes where the event was.
+
+Checked on macOS, at Goose v2026.3:
+
+- The golden files of `ws_handshake` and `ws_frames` are unchanged, so `ws_upgrade`'s
+  101 and refusals and `ws_read`'s frames are byte for byte what they were.
+  `ws_parts` adds `ws_check`'s verdicts, a refusal in a program's own shape,
+  `ws_switch`'s 101 against `ws_upgrade`'s, and `ws_take` from bytes alone against
+  `ws_read` from events, with the same bytes back, pipelined, a byte per call, cut
+  short, and over the limit. `scripts/test-http.sh`'s WebSocket echo passes on the
+  epoll build.
+- The C that Goose generates for `server/server.goose`, `server_epoll.goose`, and
+  `server_tls.goose`, normalized for specialization and constant numbers, differs from
+  `73c2d23b`'s only in `ws_upgrade`, `ws_read`, `ws_frames` (one more nested block for
+  `ws_take`'s), and the new `ws_check`, `ws_switch`, and `ws_take`. For
+  `bench/rest/goose/rest.goose` and `examples/upload/`, which don't import the module,
+  it is identical.
+- In the epoll server built with Apple clang, `ws_frames` is the same 419
+  instructions, and `echo_frames`, which inlines `ws_read`, went from 587 to 581.
+  `ws_upgrade` grew from 1,446 to 1,589, taking in `base64::encode` and SHA-1's
+  rounds, once a connection. `http::upgrade`, with one caller left, the server's
+  `/upgrade`, now has its `"echo"` folded in, which takes 3 instructions from each of
+  that route's call sites in `answer` and `call`; no other instruction of the request
+  path changed.
+
 ## Acceptance criteria
 
 - [x] The decision recorded in `docs/decisions.md`
 - [x] The audit, above
-- [ ] Items 1 and 2: the parts in `websocket.goose`, with tests under
+- [x] Items 1 and 2: the parts in `websocket.goose`, with tests under
       `test/websocket/` and `docs/api.md`; the 101, the refusals, and the frames
       unchanged byte for byte, and the request path's generated code unchanged
 - [ ] Item 3 done, or the reason it waits recorded here
