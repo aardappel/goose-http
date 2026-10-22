@@ -2,6 +2,15 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
+## Unreleased
+
+Added:
+
+- `after_drain(out)` requests a `DRAINED` event when an upgraded connection's output
+  reaches its socket, so a publisher can keep one bounded batch in flight. Pending
+  mailbox waits stay armed; closing cancels the credit. The application still bounds
+  its producer queue and batches ([API](docs/api.md#websocket)).
+
 ## v0.5.4 (2026-10-22)
 
 A blocking HTTP/1.1 and HTTPS client. Goose `v2026.3`, goose-hash `v0.0.4`, goose-tls

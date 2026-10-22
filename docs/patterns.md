@@ -246,6 +246,17 @@ Waiting is off until `Config.mail_slots` and `Config.max_waiting` are set. The c
 and every limit: [API, answers that wait](api.md#answers-that-wait). With Plod:
 [work that waits](https://github.com/kaitk/plod/blob/main/docs/tutorial/11-waiting.md).
 
+## Broadcasts to upgraded connections
+
+Keep one `after_drain` credit per subscriber, and send that subscriber its next
+bounded batch only at `DRAINED`. One client's credit says nothing about the other
+clients. The broker must also bound messages waiting for each subscriber: merge
+replaceable updates, drop messages where the application permits it, or disconnect
+a slow subscriber. If delivery must be preserved, stop admitting publications while
+the bounded queue is full; one stalled subscriber can then delay the publisher.
+`CLOSED` releases that subscriber's state. A drain credit confirms socket acceptance,
+not processing by the peer. See `examples/drain.goose` for one publisher and reader.
+
 ## Limits
 
 Every resource a worker holds is bounded by a `Config` field, and past each bound the

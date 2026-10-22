@@ -570,7 +570,7 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
         c.queued -= res as i64;
         progress = true;
         drain(c);
-        if c.queued == 0 && c.state == OPEN && c.x.stream.open && c.x.stream.framing == Framing.RawDrain {
+        if c.x.stream.framing == Framing.RawDrain && c.queued == 0 && c.state == OPEN && c.x.stream.open {
             c.x.stream.framing = Framing.Raw;
             let ev = Event { kind: DRAINED, req: nothing, data: "", whole: false, trailers: "" };
             resume(c, ev);

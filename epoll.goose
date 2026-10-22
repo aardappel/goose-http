@@ -27,7 +27,7 @@ struct EpollConn<S> {
     fd: i32,            // -1 while the slot is free
     state: u8,
     watch_out: bool,    // OUT is registered: set while out holds bytes
-    ready: bool,        // stopped reading at cfg.max_read, with the socket not empty
+    ready: bool,        // another turn is owed for reads or an upgraded drain credit
     listed: bool,       // in turns
     h2: i32 = -1,       // an h2 connection's H2Conn, in the worker's pool; -1 for HTTP/1.1,
                         // and -2 for HTTP/1.1 that a TLS handshake's ALPN chose
@@ -138,7 +138,7 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
     var timers = timer_table(if waiting { cfg.max_waiting } else { 0 });
     // Exchanges owed TIMEOUT for want of a timer, by their keys.
     var overdue: u64[>..] = [];
-    // Connections that stopped at cfg.max_read, by slot, for another turn.
+    // Connections owed another turn, by slot, for reads or a drain credit.
     var turns: u64[>..] = [];
     var generation: u64 = 0;
     let nothing = Request { .. };
@@ -350,8 +350,8 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
     // Answers what it can, sends the responses in one send, and reads more.
     // Edge-triggered epoll reports a socket again only after its state
     // changes, so this returns only once a send would block, the socket is
-    // empty, the connection is done, which is false, or it has read
-    // cfg.max_read bytes, which sets ready for another turn (go). A recv that
+    // empty, the connection is done, which is false, or its read or drain-credit
+    // budget sets ready for another turn (go). A recv that
     // filled less than it was given emptied the socket, and the next byte to
     // arrive raises a new event, so it isn't followed by a recv that would
     // block, unless hup: a close that arrived with the last bytes raises none.
@@ -361,6 +361,7 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
     fn advance<A>(c: EpollConn<S>&, hup: bool, wake: const Event&) -> bool {
         var progress = false;
         var drained = false;
+        var credited = false;
         var got = 0;
         c.ready = false;
         var ev = wake;
@@ -388,7 +389,14 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
             wbuf.clear();
             woff = 0;
             sealed = 0;
-            if c.state == OPEN && c.x.stream.open && c.x.stream.framing == Framing.RawDrain {
+            if c.x.stream.framing == Framing.RawDrain && c.state == OPEN && c.x.stream.open {
+                // One credit per turn keeps a publisher with a fast reader
+                // from delaying other sockets, mail, and the timer sweep.
+                if credited {
+                    c.ready = true;
+                    return wait(c, progress);
+                }
+                credited = true;
                 c.x.stream.framing = Framing.Raw;
                 ev = Event { kind: DRAINED, req: nothing, data: "", whole: false, trailers: "" };
                 continue;
@@ -561,9 +569,8 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
     // WAKE or TIMEOUT, and then with what it holds.
     fn resume(i: i64, ev: const Event&) { go(i, false, ev); }
 
-    // Drives connection i, and lists it for another turn if it stopped at
-    // cfg.max_read: its socket raises no new event until the client sends
-    // more, which it may not while the socket is full.
+    // Drives connection i, and lists it for another turn after cfg.max_read
+    // or a drain credit: neither needs another socket edge to resume.
     fn go(i: i64, hup: bool, ev: const Event&) {
         driving = i;
         guard drive(conns[i], hup, ev) && watch(i) else {
