@@ -103,8 +103,8 @@ build/server echo-epoll 8080      # an echo server on one edge-triggered epoll l
 The HTTP server also serves h2c, HTTP/2 with prior knowledge, on the port + 2 (8082
 beside 8080, as HttpArena has them), on every loop but IOCP. `H2C_PORT` names another
 port, and `H2C_PORT=0` turns it off. The TLS build, with `TLS_CERT` and `TLS_KEY`,
-serves HTTP/1.1 over TLS on the port + 1 (`TLS_PORT`), and h2 or HTTP/1.1 over TLS, as
-ALPN chooses, on the port + 363 (`H2_PORT`, 8443 beside 8080).
+serves h2 or HTTP/1.1 over TLS, as ALPN chooses, on the port + 1 (`TLS_PORT`) and the
+port + 363 (`H2_PORT`, 8443 beside 8080).
 
 ### Run every test
 

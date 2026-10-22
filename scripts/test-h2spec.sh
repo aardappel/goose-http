@@ -72,7 +72,7 @@ sleep 0.2
 # /plaintext, since h2spec's tests of flow control expect a response with a
 # body.
 "$h2spec" -h 127.0.0.1 -p "$h2c" -P /plaintext -o 2 ${H2SPEC_ARGS:-}
-h2=$(sed -n 's/.*, h2 over TLS on port \([0-9]*\).*/\1/p' "$log" | head -n 1)
+h2=$(grep -o ', TLS on port [0-9]*' "$log" | sed -n '2s/.* //p')
 if [ -n "$h2" ]; then
     echo "h2 over TLS, on port $h2:"
     # h2spec v2.6.0 is built with Go 1.12, whose TLS 1.3 is opt-in, and the

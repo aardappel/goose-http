@@ -4,8 +4,8 @@
 # clients, and many connections at once with scripts/http_client.py, then
 # short wrk, h2load, and oha runs that must see only 200s and no errors. The
 # epoll build also serves h2c on the port + 2 and, where openssl makes it a
-# certificate, HTTP/1.1 over TLS on the port + 1 and h2 or HTTP/1.1 over TLS,
-# as ALPN chooses, on the port + 363, which it tests the same way.
+# certificate, h2 or HTTP/1.1 over TLS, as ALPN chooses, on the port + 1 and
+# the port + 363, which it tests the same way.
 # Fails on the first error, or if the server died along the way.
 #
 # PORT picks the port (29080): keep it below the kernel's ephemeral range
@@ -136,10 +136,10 @@ stop() {
 }
 
 start
-# The ports the TLS build serves TLS and h2 over TLS on, from its first line;
-# empty for none.
-tls=$(sed -n 's/.*, TLS on port \([0-9]*\).*/\1/p' "$log" | head -n 1)
-h2tls=$(sed -n 's/.*, h2 over TLS on port \([0-9]*\).*/\1/p' "$log" | head -n 1)
+# The TLS build's two TLS ports, TLS_PORT's and H2_PORT's, from its first
+# line; empty for none.
+tls=$(grep -o ', TLS on port [0-9]*' "$log" | sed -n '1s/.* //p')
+h2tls=$(grep -o ', TLS on port [0-9]*' "$log" | sed -n '2s/.* //p')
 
 body=$(curl -sS "$url/plaintext")
 [ "$body" = "Hello, World!" ] || fail "curl /plaintext: $body"
@@ -402,9 +402,9 @@ fi
 # on (H2_PORT, the port + 363): curl with --http2 and --http1.1 on that one
 # port, openssl s_client's ALPN, a body larger than a stream's window both
 # ways and a file, through the record layer, and a short h2load run over h2;
-# and the TLS port above, which advertises http/1.1 alone, answering
-# --http2 in HTTP/1.1. The client's ALPN checks, and an idle connection's
-# GOAWAY, run below with IDLE_MS.
+# and the TLS port above, which shares its context, answering --http2 in
+# HTTP/2. The client's ALPN checks, and an idle connection's GOAWAY, run below
+# with IDLE_MS.
 if [ -z "$h2tls" ]; then
     echo "h2 over TLS: not served"
 elif ! curl -V | grep -q HTTP2; then
@@ -417,7 +417,7 @@ else
     [ "$version" = 1.1 ] || fail "h2 over TLS: curl --http1.1 got HTTP/$version"
     if [ -n "$tls" ]; then
         version=$(curl -sSk --http2 -o /dev/null -w '%{http_version}' "https://127.0.0.1:$tls/plaintext")
-        [ "$version" = 1.1 ] || fail "tls: curl --http2 got HTTP/$version where only http/1.1 is offered"
+        [ "$version" = 2 ] || fail "tls: curl --http2 got HTTP/$version"
     fi
     for p in h2 http/1.1; do
         openssl s_client -connect "127.0.0.1:$h2tls" -alpn "$p" </dev/null >"$out" 2>&1 || true

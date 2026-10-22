@@ -805,10 +805,24 @@ then lingers as a refusal does.
 Rejected: a `Listener.h2` flag. ALPN is the context's, and a loop has one context for
 all its TLS listeners, so a flag could disagree with what the handshake advertised. A
 program that wants h2 on one port and only `http/1.1` on another runs a second set of
-workers with a second context. The benchmark server does, for HttpArena's 8443 (`h2`
-and `http/1.1`) beside 8081 (`http/1.1` alone, as HttpArena's json-tls and static-tls
-ask), at the cost of a second set of idle workers in each TLS profile. A context per
-listener would need a new name in the API.
+workers with a second context. A context per listener would need a new name in the
+API.
+
+## The benchmark server offers h2 on both TLS ports
+
+Decided 2026-10-22, task 061. Replaces that task's decision 2, which kept h2 over TLS
+to 8443 and ALPN `http/1.1` alone on 8081.
+
+The benchmark server's TLS listeners, HttpArena's 8081 and 8443, share one context
+that offers `["h2", "http/1.1"]`, served by one set of workers. Keeping 8081 at
+`http/1.1` alone took a second context, and with it a second set of workers, idle in
+every TLS profile: about 2.7 MB of resident memory per worker, 170 MB on a server with
+64. HttpArena's pages ask for `http/1.1` alone on 8081, but its validation allows
+`h2` there, and the load tool of its 8081 profiles (json-tls, static-tls, 8gbit), wrk,
+offers no ALPN, so those profiles still measure HTTP/1.1.
+
+Rejected: a context per listener, which would need a new name in goose-http's API for
+one benchmark's ports.
 
 ## Not yet decided
 
