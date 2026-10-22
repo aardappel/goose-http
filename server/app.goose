@@ -40,6 +40,7 @@ fn run<TLS, WORKERS>(default_loop: const u8[:]) {
         cfg.request_ms = positive("REQUEST_MS", cfg.request_ms);
         cfg.body_ms = positive("BODY_MS", cfg.body_ms);
         cfg.write_ms = positive("WRITE_MS", cfg.write_ms);
+        cfg.idle_ms = positive("IDLE_MS", cfg.idle_ms);
         cfg.max_requests = positive("MAX_REQUESTS", cfg.max_requests);
         cfg.max_conns = positive("MAX_CONNS", cfg.max_conns);
         var logging: u8[>..] = [];

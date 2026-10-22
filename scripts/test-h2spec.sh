@@ -1,7 +1,9 @@
 #!/bin/sh
 # Runs h2spec, HTTP/2's conformance tests, against the h2c listener of
 # build/server, run with LOOP (epoll by default), which serves h2c on PORT +
-# 2 (29082). Fetches h2spec's release binary into build/ first, checked
+# 2 (29082), and, for the TLS build where openssl makes it a certificate,
+# against its h2 over TLS on PORT + 363 (29443), with ALPN h2 (h2spec -t -k).
+# Fetches h2spec's release binary into build/ first, checked
 # against the SHA-256 sums below: h2spec v2.6.0 has binaries for Linux and
 # macOS on x86-64 only, so on Apple Silicon it runs under Rosetta 2, and
 # Linux on arm64 has none (run it there in an x86-64 container). Fails if any
@@ -43,9 +45,17 @@ if [ ! -x "$h2spec" ]; then
 fi
 
 log=$(mktemp)
+certs=$(mktemp -d)
 pid=
-trap 'if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi; rm -f "$log"' EXIT
-LOOP=${LOOP:-epoll} WORKERS=${WORKERS:-2} H2C_PORT=$h2c "$root/build/server" http "$port" >"$log" 2>&1 &
+trap 'if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi; rm -rf "$log" "$certs"' EXIT
+# A self-signed pair, as scripts/test-http.sh makes, which only the TLS build
+# reads.
+if command -v openssl >/dev/null; then
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$certs/server.key" -out "$certs/server.crt" \
+        -days 2 -subj /CN=localhost 2>/dev/null
+    export TLS_CERT="$certs/server.crt" TLS_KEY="$certs/server.key"
+fi
+LOOP=${LOOP:-epoll} WORKERS=${WORKERS:-2} H2C_PORT=$h2c H2_PORT=$((port + 363)) "$root/build/server" http "$port" >"$log" 2>&1 &
 pid=$!
 tries=0
 until grep -q "h2c on port $h2c" "$log"; do
@@ -62,4 +72,12 @@ sleep 0.2
 # /plaintext, since h2spec's tests of flow control expect a response with a
 # body.
 "$h2spec" -h 127.0.0.1 -p "$h2c" -P /plaintext -o 2 ${H2SPEC_ARGS:-}
+h2=$(sed -n 's/.*, h2 over TLS on port \([0-9]*\).*/\1/p' "$log" | head -n 1)
+if [ -n "$h2" ]; then
+    echo "h2 over TLS, on port $h2:"
+    # h2spec v2.6.0 is built with Go 1.12, whose TLS 1.3 is opt-in, and the
+    # server speaks only TLS 1.3.
+    # shellcheck disable=SC2086
+    GODEBUG=tls13=1 "$h2spec" -t -k -h 127.0.0.1 -p "$h2" -P /plaintext -o 2 ${H2SPEC_ARGS:-}
+fi
 kill -0 "$pid" || { echo "the server died:" >&2; cat "$log" >&2; exit 1; }

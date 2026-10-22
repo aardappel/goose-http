@@ -40,9 +40,10 @@ COPY --from=build /server/build/server /server-tls
 # ring provider offers these, rather than OpenSSL's default with
 # X25519MLKEM768 first, which costs each connection about 6 KB more.
 ENV TLS_GROUPS=X25519:P-256:P-384
-# HTTP/1.1 on 8080, HTTP/1.1 over TLS on 8081, the port + 1, and h2c with
-# prior knowledge on 8082, the port + 2.
-EXPOSE 8080 8081 8082
+# HTTP/1.1 on 8080, HTTP/1.1 over TLS on 8081, the port + 1, h2c with prior
+# knowledge on 8082, the port + 2, and h2 or HTTP/1.1 over TLS, as ALPN
+# chooses, on 8443, the port + 363, from workers of its own.
+EXPOSE 8080 8081 8082 8443
 # One worker per CPU of the container's cpuset, which nproc reads. Waiting
 # on, for the async profile's /delay: up to 16,384 timers a worker, as many
 # as its connections. It left plaintext's instructions per request unchanged.

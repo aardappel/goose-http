@@ -4,7 +4,8 @@
 # clients, and many connections at once with scripts/http_client.py, then
 # short wrk, h2load, and oha runs that must see only 200s and no errors. The
 # epoll build also serves h2c on the port + 2 and, where openssl makes it a
-# certificate, HTTP/1.1 over TLS on the port + 1, which it tests the same way.
+# certificate, HTTP/1.1 over TLS on the port + 1 and h2 or HTTP/1.1 over TLS,
+# as ALPN chooses, on the port + 363, which it tests the same way.
 # Fails on the first error, or if the server died along the way.
 #
 # PORT picks the port (29080): keep it below the kernel's ephemeral range
@@ -135,8 +136,10 @@ stop() {
 }
 
 start
-# The port the epoll build serves TLS on, from its first line; empty for none.
+# The ports the TLS build serves TLS and h2 over TLS on, from its first line;
+# empty for none.
 tls=$(sed -n 's/.*, TLS on port \([0-9]*\).*/\1/p' "$log" | head -n 1)
+h2tls=$(sed -n 's/.*, h2 over TLS on port \([0-9]*\).*/\1/p' "$log" | head -n 1)
 
 body=$(curl -sS "$url/plaintext")
 [ "$body" = "Hello, World!" ] || fail "curl /plaintext: $body"
@@ -395,10 +398,60 @@ else
     echo "tls: ok"
 fi
 
+# h2 or HTTP/1.1 over TLS, as ALPN chooses, on the port the server serves it
+# on (H2_PORT, the port + 363): curl with --http2 and --http1.1 on that one
+# port, openssl s_client's ALPN, a body larger than a stream's window both
+# ways and a file, through the record layer, and a short h2load run over h2;
+# and the TLS port above, which advertises http/1.1 alone, answering
+# --http2 in HTTP/1.1. The client's ALPN checks, and an idle connection's
+# GOAWAY, run below with IDLE_MS.
+if [ -z "$h2tls" ]; then
+    echo "h2 over TLS: not served"
+elif ! curl -V | grep -q HTTP2; then
+    echo "h2 over TLS: skipped, this curl has no HTTP/2"
+else
+    h2tlsurl=https://127.0.0.1:$h2tls
+    version=$(curl -sSk --http2 -o /dev/null -w '%{http_version}' "$h2tlsurl/plaintext")
+    [ "$version" = 2 ] || fail "h2 over TLS: curl --http2 got HTTP/$version"
+    version=$(curl -sSk --http1.1 -o /dev/null -w '%{http_version}' "$h2tlsurl/plaintext")
+    [ "$version" = 1.1 ] || fail "h2 over TLS: curl --http1.1 got HTTP/$version"
+    if [ -n "$tls" ]; then
+        version=$(curl -sSk --http2 -o /dev/null -w '%{http_version}' "https://127.0.0.1:$tls/plaintext")
+        [ "$version" = 1.1 ] || fail "tls: curl --http2 got HTTP/$version where only http/1.1 is offered"
+    fi
+    for p in h2 http/1.1; do
+        openssl s_client -connect "127.0.0.1:$h2tls" -alpn "$p" </dev/null >"$out" 2>&1 || true
+        grep -q "^ALPN protocol: $p\$" "$out" || { cat "$out"; fail "s_client -alpn $p: not chosen"; }
+    done
+    head -c 3000000 /dev/urandom >"$files/h2tls.bin"
+    curl -sSk --http2 --data-binary "@$files/h2tls.bin" -H 'Content-Type: application/octet-stream' \
+        -o "$files/h2tls.echo" "$h2tlsurl/echo"
+    cmp -s "$files/h2tls.bin" "$files/h2tls.echo" || fail "h2 over TLS /echo didn't return the body"
+    curl -sSk --http2 -o "$files/h2tls.file" "$h2tlsurl/files/h2tls.bin"
+    cmp -s "$files/h2tls.bin" "$files/h2tls.file" || fail "h2 over TLS /files/ didn't send the file"
+    rm -f "$files/h2tls.bin" "$files/h2tls.echo" "$files/h2tls.file"
+    h2load -c 64 -m 100 -n 100000 "$h2tlsurl/plaintext" >"$out"
+    grep -q 'succeeded, 0 failed, 0 errored, 0 timeout' "$out" || { cat "$out"; fail "h2load h2 over TLS"; }
+    grep -q 'status codes: 100000 2xx, 0 3xx, 0 4xx, 0 5xx' "$out" || { cat "$out"; fail "h2load h2 over TLS"; }
+    grep -q 'Application protocol: h2$' "$out" || { cat "$out"; fail "h2load: ALPN wasn't h2"; }
+    echo "h2 over TLS: ok"
+fi
+
 kill -0 "$pid" || fail "the server died"
 stop
 echo "The server's output:"
 sed 's/^/    /' "$log"
+
+# The client's ALPN offers on the h2 port, and an idle h2 connection's
+# GOAWAY and close_notify after IDLE_MS.
+if [ -n "$h2tls" ]; then
+    export IDLE_MS=2000
+    start
+    python3 "$root/scripts/http_client.py" "$h2tls" tls-h2
+    kill -0 "$pid" || fail "the server died"
+    stop
+    unset IDLE_MS
+fi
 
 # A graceful stop by SIGTERM: the server exits by itself, with status 0, once
 # its connections have closed.

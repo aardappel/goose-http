@@ -31,6 +31,9 @@
     http_client.py PORT tls         HTTP/1.1 over TLS, PORT being the server's TLS port:
                                     the checks above that suit it, and bad handshakes
     http_client.py PORT tls-slow    handshakes that stall, against REQUEST_MS
+    http_client.py PORT tls-h2      h2 or HTTP/1.1 over TLS, as ALPN chooses, PORT being
+                                    the server's h2 port; with IDLE_MS, an idle h2
+                                    connection's GOAWAY and close_notify
     http_client.py PORT stop PID    a graceful stop, by SIGTERM to the server's PID
     http_client.py PORT stop-break SERVER
                                     on Windows, a graceful stop by Ctrl+Break, of a
@@ -63,12 +66,13 @@ except ImportError:
 
 HOST = "127.0.0.1"
 SERVER_NAME = os.environ.get("SERVER_NAME", "goose")
-# The server's request_ms, body_ms, and write_ms (http::Config, http.goose), in
-# seconds: the package's defaults, or what test-http.sh gives the server for the
-# slow run.
+# The server's request_ms, body_ms, write_ms, and idle_ms (http::Config,
+# http.goose), in seconds: the package's defaults, or what test-http.sh gives
+# the server for the slow runs.
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_MS", "10000")) / 1000
 BODY_TIMEOUT = int(os.environ.get("BODY_MS", "10000")) / 1000
 WRITE_TIMEOUT = int(os.environ.get("WRITE_MS", "10000")) / 1000
+IDLE_TIMEOUT = int(os.environ.get("IDLE_MS", "60000")) / 1000
 # What TechEmpower's load generator sends with each request.
 TFB_HEADERS = (
     b"Host: tfb-server\r\n"
@@ -790,6 +794,16 @@ def graceful_stop(port, send):
         ports.append(port + 1)
     except OSError:
         pass
+    # An idle h2 connection over TLS, where the server serves it on port + 363
+    # (H2_PORT's default), which the stop sends a GOAWAY and then
+    # close_notify.
+    h2tls = None
+    try:
+        h2tls = tls_open(port + 363, ["h2"])
+        h2tls.sendall(H2_PREFACE)
+        ports.append(port + 363)
+    except OSError:
+        pass
     # Long enough for the server to accept them, and to fill big's socket.
     time.sleep(0.5)
     send()
@@ -832,6 +846,9 @@ def graceful_stop(port, send):
         except OSError:
             fail("an idle TLS connection stayed open after the stop")
         secure.close()
+    if h2tls is not None:
+        goaway_then_close_notify(h2tls, "an idle h2 connection over TLS, at the stop,", 2)
+        h2tls.close()
     # Every worker's listeners close within a second or so. Windows refuses a
     # connection to a closed port only after retrying for about 2 s, so a
     # timeout counts as refused, and on Linux a connection queued on a
@@ -935,6 +952,107 @@ def tls_slow(port):
             fail(f"tls: {name} closed after {took:.1f} s, with request_ms {REQUEST_TIMEOUT} s")
         sock.close()
     print("tls slow: ok")
+
+
+# The client's connection preface, and an empty SETTINGS frame.
+H2_PREFACE = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + bytes([0, 0, 0, 4, 0, 0, 0, 0, 0])
+
+
+def h2_frames(data):
+    """The whole frames in data, as (type, flags, stream, payload)."""
+    frames = []
+    at = 0
+    while at + 9 <= len(data):
+        n = int.from_bytes(data[at:at + 3], "big")
+        if at + 9 + n > len(data):
+            break
+        stream = int.from_bytes(data[at + 5:at + 9], "big") & 0x7FFFFFFF
+        frames.append((data[at + 3], data[at + 4], stream, data[at + 9:at + 9 + n]))
+        at += 9 + n
+    return frames
+
+
+def tls_open(port, alpn):
+    sock = socket.create_connection((HOST, port), 5)
+    return tls_context(alpn).wrap_socket(sock, suppress_ragged_eofs=False)
+
+
+def goaway_then_close_notify(s, what, timeout):
+    """Reads s until the server's close_notify, which must follow a GOAWAY of
+    NO_ERROR."""
+    s.settimeout(timeout)
+    got = b""
+    try:
+        while chunk := s.recv(65536):
+            got += chunk
+    except ssl.SSLEOFError:
+        fail(f"{what} closed without close_notify")
+    except OSError:
+        fail(f"{what} stayed open")
+    if not any(t == 7 and p[4:8] == b"\0\0\0\0" for t, _, _, p in h2_frames(got)):
+        fail(f"{what} got close_notify without a GOAWAY of NO_ERROR before it")
+
+
+def tls_h2(port):
+    """h2 over TLS on the port that serves it, where the context lists h2
+    and http/1.1: ALPN chooses h2 for a client that offers it, and HTTP/1.1
+    for one that offers only http/1.1 or no ALPN, each served by its own
+    driver. A client that offers neither gets HTTP/1.1, or, from a server
+    that follows RFC 7301 §3.2, the no_application_protocol alert. With
+    IDLE_MS, an idle h2 connection is sent GOAWAY and then close_notify."""
+    # GET /plaintext, in HPACK: :method GET and :scheme https from the static
+    # table, :path and :authority as literals with indexed names.
+    get = b"\x82\x87\x04\x0a/plaintext\x01\x09localhost"
+    headers = len(get).to_bytes(3, "big") + bytes([1, 5]) + (1).to_bytes(4, "big") + get
+    for offer in (["h2"], ["h2", "http/1.1"], ["http/1.1"], None, ["spdy/3"]):
+        try:
+            s = tls_open(port, offer)
+        except ssl.SSLError as e:
+            if offer == ["spdy/3"] and "NO_APPLICATION_PROTOCOL" in str(e).upper():
+                continue
+            fail(f"tls-h2: ALPN {offer}: {e}")
+        chosen = s.selected_alpn_protocol()
+        want = "h2" if offer and "h2" in offer else ("http/1.1" if offer == ["http/1.1"] else None)
+        if s.version() != "TLSv1.3" or chosen != want:
+            fail(f"tls-h2: ALPN {offer} chose {chosen} over {s.version()}")
+        if chosen == "h2":
+            s.sendall(H2_PREFACE + headers)
+            got = b""
+            body = None
+            while body is None:
+                chunk = s.recv(65536)
+                if not chunk:
+                    fail(f"tls-h2: ALPN {offer}: closed before the response")
+                got += chunk
+                frames = h2_frames(got)
+                if frames and frames[0][0] != 4:
+                    fail(f"tls-h2: ALPN {offer}: the server's first frame is of type {frames[0][0]}, not SETTINGS")
+                data = [p for t, f, st, p in frames if t == 0 and st == 1]
+                if any(t == 0 and st == 1 and f & 1 for t, f, st, _ in frames):
+                    body = b"".join(data)
+            if body != b"Hello, World!":
+                fail(f"tls-h2: ALPN {offer}: h2 body {body!r}")
+        else:
+            s.sendall(request(b"/plaintext"))
+            got = b""
+            while b"Hello, World!" not in got:
+                chunk = s.recv(65536)
+                if not chunk:
+                    fail(f"tls-h2: ALPN {offer}: closed before the response")
+                got += chunk
+            if not got.startswith(b"HTTP/1.1 200 "):
+                fail(f"tls-h2: ALPN {offer}: {got[:40]!r}")
+        s.close()
+    if IDLE_TIMEOUT < 60:
+        s = tls_open(port, ["h2"])
+        s.sendall(H2_PREFACE)
+        t0 = time.time()
+        goaway_then_close_notify(s, "an idle h2 connection over TLS", IDLE_TIMEOUT + 3)
+        took = time.time() - t0
+        if took < IDLE_TIMEOUT - 0.5:
+            fail(f"tls-h2: an idle h2 connection closed after {took:.1f} s, with idle_ms {IDLE_TIMEOUT} s")
+        s.close()
+    print("tls-h2: ok")
 
 
 def files(port, root):
@@ -1681,7 +1799,7 @@ def main():
         {"tfb": tfb, "pipeline": pipeline, "large": large, "chunked": chunked, "keepalive": keepalive,
          "hostile": hostile, "slow": slow, "stream": stream, "requests": requests,
          "client": client, "later": later, "later-off": later_off, "forms": forms,
-         "tls": tls_checks, "tls-slow": tls_slow, "websocket": websocket}[mode](port)
+         "tls": tls_checks, "tls-slow": tls_slow, "tls-h2": tls_h2, "websocket": websocket}[mode](port)
 
 
 if __name__ == "__main__":
