@@ -40,14 +40,15 @@ COPY --from=build /server/build/server /server-tls
 # ring provider offers these, rather than OpenSSL's default with
 # X25519MLKEM768 first, which costs each connection about 6 KB more.
 ENV TLS_GROUPS=X25519:P-256:P-384
-# HTTP/1.1 on 8080, HTTP/1.1 over TLS on 8081, the port + 1, h2c with prior
-# knowledge on 8082, the port + 2, and h2 or HTTP/1.1 over TLS, as ALPN
-# chooses, on 8443, the port + 363, from workers of its own.
+# HTTP/1.1 on 8080, h2c with prior knowledge on 8082, the port + 2, and h2 or
+# HTTP/1.1 over TLS, as ALPN chooses, on 8081, the port + 1, and 8443, the
+# port + 363.
 EXPOSE 8080 8081 8082 8443
 # One worker per CPU of the container's cpuset, which nproc reads. Waiting
 # on, for the async profile's /delay: up to 16,384 timers a worker, as many
 # as its connections. It left plaintext's instructions per request unchanged.
 # TLS with the certificate HttpArena mounts at /certs, for the profiles that
 # mount it, from the TLS build; without one, the build that doesn't map
-# OpenSSL. Both on the io_uring loop.
-CMD ["/bin/sh", "-c", "server=/server; if [ -r /certs/server.crt ] && [ -r /certs/server.key ]; then export TLS_CERT=/certs/server.crt TLS_KEY=/certs/server.key; server=/server-tls; fi; LOOP=uring WORKERS=${WORKERS:-$(nproc)} MAIL_SLOTS=256 MAX_WAITING=16384 exec $server http 8080"]
+# OpenSSL. Both on the io_uring loop. /static/ serves the files HttpArena
+# mounts at /data/static.
+CMD ["/bin/sh", "-c", "server=/server; if [ -r /certs/server.crt ] && [ -r /certs/server.key ]; then export TLS_CERT=/certs/server.crt TLS_KEY=/certs/server.key; server=/server-tls; fi; LOOP=uring WORKERS=${WORKERS:-$(nproc)} MAIL_SLOTS=256 MAX_WAITING=16384 FILES=/data/static exec $server http 8080"]

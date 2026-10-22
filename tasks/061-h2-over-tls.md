@@ -1,8 +1,9 @@
 # 061: h2 over TLS, chosen by ALPN
 
 Status: in-progress (asked for 2026-10-22). h2 over TLS serves from both loops, on
-`main`, over goose-tls `v0.0.4`'s TLS 1.3 server in Goose; HttpArena's validation and
-its baseline-h2 runs remain, and static-h2 is deferred ([below](#static-h2)).
+`main`, over goose-tls `v0.0.4`'s TLS 1.3 server in Goose, and the benchmark server
+serves static-h2's `/static/`; HttpArena's validation and its baseline-h2 and
+static-h2 runs remain.
 
 Task 014's phase 5: one TLS listener serves h2 or HTTP/1.1 on the same port, as the
 client's ALPN offer and the context's protocol list decide, on the epoll loop (and so
@@ -17,9 +18,13 @@ Taken 2026-10-22, on the design below:
    goose-http adds no `Listener.h2` flag and no other name
    ([decisions](../docs/decisions.md#alpn-chooses-h2-over-tls)).
 2. The benchmark server offers h2 over TLS on 8443 only. 8081 stays at ALPN
-   `http/1.1` alone, as HttpArena's json-tls and static-tls pages ask.
+   `http/1.1` alone, as HttpArena's json-tls and static-tls pages ask. Replaced the
+   same day: both ports share one context that offers h2
+   ([decisions](../docs/decisions.md#the-benchmark-server-offers-h2-on-both-tls-ports),
+   [below](#the-benchmark-server)).
 3. static-h2 is in scope only if it needs no more than the 8443 listener and the
-   existing static-file route over h2.
+   existing static-file route over h2. Widened the same day: the server serves
+   `/static/` too ([below](#static-h2)).
 4. Instruction counts now; HttpArena's numbers wait for goose-tls's rewritten server,
    which changes both the memory and the rate. That server came first, as goose-tls
    `v0.0.4` (pinned 2026-10-22, before this task's change), and h2 over TLS is built on
@@ -102,40 +107,53 @@ as to h2c. goose-rest's `rest.tls` passes a `TlsServer` through and needs no cha
 ### The benchmark server
 
 A loop has one `TlsServer`, so one context and one ALPN list for all its TLS
-listeners, and decision 2 wants two lists. The server keeps 8081's context at
-`["http/1.1"]` and serves `H2_PORT` (its port + 363, 8443 beside 8080; 0 for none)
-from a second context, `["h2", "http/1.1"]`, and a second set of workers, as many as
-the first, which `tls_workers` spawns beside them (`server/https.goose`). No
-`MAX_LISTENERS` change was needed. The cost is a second set of idle workers in every
-TLS profile: their threads, stacks, rings, and buffers. With `WORKERS=4`, the TLS
-build's resident memory after 2 s idle went from 19.5 to 30.2 MB on io_uring and from
-17.3 to 28.0 MB on epoll, about 2.7 MB per idle worker (Docker Desktop on an Apple
-M-series Mac, arm64 Ubuntu 26.04, `VmRSS`, 2026-10-22): about 170 MB more on a server
-with 64 workers, in json-tls as in baseline-h2. This is for the maintainer to settle
-before the h2 profiles run. A context per listener would
-avoid it, at the cost of a new name in goose-http's API; one context for both ports
-would avoid it too, and HttpArena's validation allows `h2` advertised on 8081, but its
-pages ask for `http/1.1` alone there.
+listeners. The server first kept 8081's context at `["http/1.1"]`, as decision 2 had
+it, and served `H2_PORT` (its port + 363, 8443 beside 8080; 0 for none) from a second
+context, `["h2", "http/1.1"]`, and a second set of workers, as many as the first. That
+cost a second set of idle workers in every TLS profile: their threads, stacks, rings,
+and buffers. With `WORKERS=4`, the TLS build's resident memory after 2 s idle went
+from 19.5 to 30.2 MB on io_uring and from 17.3 to 28.0 MB on epoll, about 2.7 MB per
+idle worker (Docker Desktop on an Apple M-series Mac, arm64 Ubuntu 26.04, `VmRSS`,
+2026-10-22): about 170 MB more on a server with 64 workers, in json-tls as in
+baseline-h2.
 
-The Dockerfile exposes 8443. `meta.json` lists neither h2 profile yet: baseline-h2
-once HttpArena's validation passes with it, after goose-tls's rewrite.
+So both TLS listeners now share one context, `["h2", "http/1.1"]`, and one set of
+workers (2026-10-22,
+[decisions](../docs/decisions.md#the-benchmark-server-offers-h2-on-both-tls-ports)):
+`TLS_PORT` and `H2_PORT` are two listeners of the same workers, which takes the loop
+to four listeners with h2c's, the most `MAX_LISTENERS` and the emulated ring allow.
+HttpArena's validation (at the pinned `3717e256`) allows `h2` on 8081: its json-tls,
+static-tls, and 8gbit checks ask with `curl --http1.1` and with `openssl s_client
+-alpn http/1.1`, and accept either protocol where curl offers both. Those profiles
+load 8081 with wrk, which offers no ALPN (`wg/wrk`'s `ssl.c` at `a211dd5a` sets none),
+so they still measure HTTP/1.1. With `WORKERS=4` on macOS (Apple M1 Pro, `ps` RSS
+after 2 s idle, the median of three, 2026-10-22), the TLS build went from 7.6 to
+6.3 MB on kqueue and from 7.9 to 6.4 MB on the emulated ring; macOS touches few of an
+idle worker's pages, so Linux's `VmRSS`, as measured above, is still to take.
+
+The Dockerfile exposes 8443. `meta.json` lists static-h2; baseline-h2 once
+HttpArena's validation passes with it.
 
 ### static-h2
 
-Deferred (2026-10-22). Over h2 and TLS, the server's existing route serves HttpArena's
-20 files with their pre-compressed `.br` and `.gz` siblings, by `Accept-Encoding`
-(checked with HttpArena's `data/static` at `0720ee57`). But the profile needs more
-than that: the route is `/files/` where HttpArena requests `/static/`, the container
-would have to set `FILES=/data/static`, and HttpArena's validation expects
-`Content-Type: application/javascript` for `app.js` where `http::content_type_of`
-gives `text/javascript`, which RFC 9239 made the type for JavaScript. Each is small,
-but the last is a choice about the package's content types, for a benchmark.
+The server serves `/static/NAME` as it serves `/files/NAME`, from the directory
+`FILES` names, which the Dockerfile sets to `/data/static`, where HttpArena mounts its
+20 files with their pre-compressed `.br` and `.gz` siblings; the route picks a
+sibling by `Accept-Encoding`. `/files/` stays, for `bench/files.sh`, `bench/oha.sh`,
+and the tests, whose rival servers serve a directory named `files`.
+
+`app.js` goes out as `text/javascript`, `http::content_type_of`'s type, which RFC 9239
+made the type for JavaScript, where HttpArena's static checks name
+`application/javascript`. The benchmark server was to map `.js` to
+`application/javascript` itself, but HttpArena's `check_header` treats the two as
+equal (RFC 9239), at the pinned `3717e256` and at `0720ee57`, which this task first
+read, so the server keeps the package's type.
 
 ## Tests
 
 - `scripts/test-http.sh`, on both loops: `curl -k --http2` gets HTTP/2 and
-  `curl -k --http1.1` HTTP/1.1 on the h2 port, and `--http2` HTTP/1.1 on the TLS port,
-  which offers `http/1.1` alone; `openssl s_client -alpn h2` and `-alpn http/1.1`
+  `curl -k --http1.1` HTTP/1.1 on the h2 port, and `--http2` HTTP/2 on the TLS port,
+  which shares its context; `openssl s_client -alpn h2` and `-alpn http/1.1`
   each get their protocol; a 3 MB body echoed and a 3 MB file sent over h2 through the
   record layer; h2load over TLS (`-c 64 -m 100`, 100,000 requests), every request 2xx
   with ALPN h2.
@@ -206,6 +224,7 @@ same method; goose-tls's own server takes 44% and 39% fewer.
 - [x] Plaintext user instructions per request unchanged, and HTTP/1.1 over TLS's
       within 0.25% (valgrind, numbers above); on bare-metal Linux with
       `bench/count.sh`, still to run
-- [ ] HttpArena's validation passes with baseline-h2, and baseline-h2 is measured
+- [ ] HttpArena's validation passes with baseline-h2 and static-h2, and both are
+      measured
 - [x] `docs/decisions.md`, `docs/api.md`, `docs/architecture.md`, `README.md`, and
       `CHANGELOG.md` describe h2 over TLS

@@ -10,8 +10,9 @@ Added:
   as `tls::server_files(chain, key, ["h2", "http/1.1"])`, serves h2 to a client that
   offers it and HTTP/1.1 to one that doesn't, on one port. No new name; a context
   that lists only `http/1.1` serves as before. h2spec passes over TLS on both loops.
-  The benchmark server serves it on its port + 363 (8443 beside 8080, `H2_PORT`), from
-  workers of its own, and keeps ALPN `http/1.1` alone on its TLS port.
+  The benchmark server serves it from one context on both its TLS ports, the port + 1
+  and the port + 363 (8081 and 8443 beside 8080, `TLS_PORT` and `H2_PORT`), and
+  serves `/static/` as `/files/`, for HttpArena's static profiles.
 - An idle h2 connection, h2c or over TLS, is sent GOAWAY before it closes, and over
   TLS close_notify after it.
 - `http::file_tag(f)`, the `ETag` that `serve_file` sends, which `serve_file` now

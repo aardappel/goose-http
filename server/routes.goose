@@ -3,7 +3,7 @@
 // /stream, which send a response of any size in pieces, /upload and /echo,
 // which take a body of any size in pieces, /upgrade, which switches to a
 // protocol that echoes bytes, and with delay, waits for the backend
-// meanwhile, /files/NAME, the files of the directory that
+// meanwhile, /files/NAME and /static/NAME, the files of the directory that
 // FILES names, /client, the peer's address and port and the client's,
 // trusting proxies on loopback, /later and /events, answers that wait
 // for the backend thread (backend.goose): one reply, or Server-Sent Events,
@@ -172,7 +172,8 @@ inline fn route_rest(req: http::Request, path: const u8[:], get: bool, body: con
     // Upgrade: echo switches the connection to echoing what comes, as it is.
     let raw = path == "/upgrade";
     let ws = path == "/ws";
-    let files = starts_with(path, "/files/");
+    // HttpArena's static profiles name it /static/.
+    let files = starts_with(path, "/files/") || starts_with(path, "/static/");
     let post = req.method == "POST";
     if !get && !post && !http::known_method(req.method) {
         http::start(out, 501);
@@ -224,7 +225,7 @@ inline fn route_rest(req: http::Request, path: const u8[:], get: bool, body: con
         // A chunked body's trailers go back as the response's.
         if whole { http::end(out, trailers); } else { st.route = ECHO; }
     } else if files {
-        serve_static(req, path[7..], st, out);
+        serve_static(req, path[if path[1] == 'f' { 7 } else { 8 }..], st, out);
     } else if raw {
         if http::upgrade_of(req) == "echo" {
             http::upgrade(out, "echo");
@@ -257,7 +258,7 @@ inline fn route_rest(req: http::Request, path: const u8[:], get: bool, body: con
     }
 }
 
-// /files/NAME: the file NAME, percent-decoded, in the directory FILES names,
+// /files/NAME and /static/NAME: the file NAME, percent-decoded, in the directory FILES names,
 // or a precompressed copy of it.
 fn serve_static(req: http::Request, name: const u8[:], st: Transfer&, out: http::Reply) {
     var dir: u8[>..] = [];

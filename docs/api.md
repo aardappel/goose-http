@@ -401,7 +401,8 @@ thread_fn worker(cfg: http::Config) {
 
 ### Files
 
-Shown in `files/`, and in `server/`: `/files/NAME` serves the directory in `FILES`.
+Shown in `files/`, and in `server/`: `/files/NAME` serves the directory in `FILES`, and
+so does `/static/NAME`, as HttpArena's static profiles ask.
 
 - `http::open_file(path)`: opens a regular file, or 404 or 403.
 - `http::open_precompressed(req, path)`: the same, or in its place `path.br`,
@@ -882,7 +883,7 @@ fn main() {
   behavior: handlers don't change, and a stop sends GOAWAY.
 - A loop's TLS listeners share its one context, and so one ALPN list. A program that
   wants `h2` on one port and only `http/1.1` on another runs a second set of workers
-  with a second context, as the benchmark server does.
+  with a second context.
 - `http::serve(cfg, server) { req, body, out => ... }` and
   `http::serve(cfg, fresh, server) { ev, st, out => ... }` are the two `serve`s with
   the TLS of the listeners that ask for it, and `http::serve_epoll` takes the same
@@ -896,10 +897,10 @@ closes after its response sends close_notify, and so does an idle one that times
 or is closed by a stop; an h2 connection sends GOAWAY first. Files are read in pieces
 rather than sent by `sendfile` or splice.
 
-The benchmark server's TLS build (`scripts/build.sh` with `TLS=1`) serves TLS on its
-port + 1, as HttpArena's 8081 is beside 8080, with either loop, when `TLS_CERT` and
-`TLS_KEY` name a PEM certificate chain and its key, with ALPN `http/1.1` alone, as
-HttpArena asks of 8081. It serves h2 or HTTP/1.1 over TLS, as ALPN chooses, on its
-port + 363, as HttpArena's 8443 is beside 8080, from a second context and a second set
-of workers. `TLS_PORT` and `H2_PORT` name other ports, and 0 turns either off.
+The benchmark server's TLS build (`scripts/build.sh` with `TLS=1`) serves h2 or
+HTTP/1.1 over TLS, as ALPN chooses, with either loop, when `TLS_CERT` and `TLS_KEY`
+name a PEM certificate chain and its key: on its port + 1 and its port + 363, as
+HttpArena's 8081 and 8443 are beside 8080, from one context
+([decisions](decisions.md#the-benchmark-server-offers-h2-on-both-tls-ports)).
+`TLS_PORT` and `H2_PORT` name other ports, and 0 turns either off.
 
