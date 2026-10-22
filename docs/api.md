@@ -212,6 +212,10 @@ that answers in its own shape
   field names are the same, ignoring case.
 - `http::file_tag(f)`: the `ETag` that `serve_file` sends for `f`, quoted, for a
   program that answers its 304 or 416 itself with `not_modified` and `range_of`.
+- `open_precompressed`'s parts: `coding_q` weighs each coding, `open_file` opens each
+  copy, the fresher by `f.modified` is kept, and `http::close_file(f)` closes a file
+  passed over. A `File` the program makes this way sets `coding` to the copy's
+  `Content-Encoding` and `vary` to true, which `serve_file` then sends.
 - Compression's parts, which `respond_compressed` composes: `http::coding_for(req,
   c)`, the coding the response takes; `http::coding_q(req, coding)`, the weight
   `Accept-Encoding` gives a coding, in thousandths; `http::compressible(type)`,

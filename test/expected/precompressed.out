@@ -4,4 +4,5 @@ copy picked: 'br', 2 bytes
 copy picked: 'gzip', 2 bytes
 copy picked: 'gzip', 2 bytes
 copy picked: '', 5 bytes
+the same copy from the parts, closed with close_file
 a missing file: 404

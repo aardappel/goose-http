@@ -1,6 +1,6 @@
 # 059: Composable parts
 
-Status: in-progress (asked for 2026-10-22); items 5, 8, 13, and 14 open.
+Status: in-progress (asked for 2026-10-22); item 5 open.
 
 Every convenience is a composition of public parts
 ([decision](../docs/decisions.md#every-convenience-is-a-composition-of-public-parts)):
@@ -122,9 +122,15 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
     `begin_compressed`, is 1,678, from 1,681. Either is once a streamed response,
     not once a request. A `const Compression&` saved one instruction on clang, but a
     reference can't take a default.
-14. [ ] **`open_precompressed(req, path)`** negotiates, probes the files, picks the
+14. [x] **`open_precompressed(req, path)`** negotiates, probes the files, picks the
     fresher, and closes the ones it doesn't use. Its parts exist, `coding_q` now
-    listed. Recorded, as item 13.
+    listed. Recorded, as item 13. Done (2026-10-22): `coding_q` and `open_file` were
+    listed, and the choice is a comparison of `File.modified`; closing a `File` was
+    the one part missing, since `close_body` takes a `FileBody`. `close_file(f)`,
+    which `open_precompressed` calls, closes it where its `fd` isn't -1. `docs/api.md`
+    lists the parts, and the `File` fields a program sets. Built with Apple clang,
+    `-O2`, `examples/files`'s handler, which takes in `open_precompressed`, is the same
+    5,392 instructions; with gcc 15 for x86-64 the same 1,971.
 
 Checked and left as they are:
 

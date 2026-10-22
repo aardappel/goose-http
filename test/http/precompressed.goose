@@ -71,6 +71,20 @@ fn main() {
     let asked = check::request("GET", "Accept-Encoding: gzip\r\n", rb);
     let none, missing = http::open_precompressed(asked, "no such file here");
     assert(missing == 404 && none.fd < 0);
+    http::close_file(none);
+
+    // open_precompressed's choice from its parts: coding_q, open_file, the
+    // fresher by modified, and close_file for the file passed over.
+    let plain, ps = http::open_file(name);
+    let gz, gs = http::open_file(str(name, ".gz"));
+    assert(ps == 200 && gs == 200 && http::coding_q(asked, "gzip") > 0 && gz.modified >= plain.modified);
+    http::close_file(plain);
+    let own = http::File { fd: gz.fd, size: gz.size, modified: gz.modified, coding: "gzip", vary: true };
+    let picked, s = http::open_precompressed(asked, name);
+    assert(s == 200 && http::file_tag(own) == http::file_tag(picked));
+    http::close_file(own);
+    http::close_file(picked);
+    print("the same copy from the parts, closed with close_file");
     for suffix in ["", ".gz", ".br"] { assert(delete_file(str(name, suffix))); }
     print("a missing file: ", missing);
 }

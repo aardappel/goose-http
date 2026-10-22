@@ -11,6 +11,8 @@ Added:
 - `http::take_compressed(z, coding, c)`, which takes and resets an encoder from the
   worker's pool, and which `begin_compressed` now calls once it has written the head,
   so a program that writes its own head can stream compressed.
+- `http::close_file(f)`, which closes a `File` that `open_file` opened and the
+  program won't serve, the last of `open_precompressed`'s parts to be public.
 
 Fixed:
 

@@ -89,13 +89,17 @@ fn open_precompressed(req: const Request&, path: const u8[:]) -> File, i32 {
         let v, s = open_file(name);
         guard s == 200 else { continue; }
         if v.modified >= f.modified {
-            net_file_close(f.fd);
+            close_file(f);
             return File { fd: v.fd, size: v.size, modified: v.modified, coding: codings[best], vary: true }, 200;
         }
-        net_file_close(v.fd);
+        close_file(v);
     }
     return File { fd: f.fd, size: f.size, modified: f.modified, vary: true }, 200;
 }
+
+// Closes f, which open_file opened, for a file the program won't serve, such
+// as a copy that open_precompressed passes over.
+inline fn close_file(f: File) { if f.fd >= 0 { net_file_close(f.fd); } }
 
 // Closes b's file, if open, and leaves nothing to send.
 fn close_body(b: FileBody&) {
