@@ -233,6 +233,21 @@ validation at `3717e256` passed json-tls, baseline-h2, and static-h2 (for static
 the certificate, TLS 1.3, ALPN h2, content types, size, and 404). The report of that
 run lost the epoll plaintext rows and h2 on io_uring.
 
+v0.5.2 (`136d49cd`, goose-tls `v0.0.5`) against v0.5.1 (`297de935`, goose-tls
+`v0.0.4`), the same way on the same machine: `scripts/test.sh` passed on every loop,
+and HttpArena's validation passed baseline-h2 and static-h2, 82 checks in all.
+Plaintext and `/api/me` didn't change on either loop. Idle `VmRSS` moved by 40 kB or
+less, within the runs' spread.
+
+| Row | Loop | v0.5.1 | v0.5.2 | Change |
+|---|---|---:|---:|---:|
+| `/plaintext` | epoll | 1,893.3 | 1,893.3 | 0 |
+| `/plaintext` | io_uring | 1,923.7 | 1,923.7 | 0 |
+| HTTP/1.1 over TLS, `/json` | epoll | 5,146.3 | 4,879.5 | -5.2% |
+| HTTP/1.1 over TLS, `/json` | io_uring | 6,042.2 | 5,825.8 | -3.6% |
+| h2 over TLS, `/json` | epoll | 11,089.9 | 10,842.2 | -2.2% |
+| h2 over TLS, `/json` | io_uring | 11,171.2 | 10,974.2 | -1.8% |
+
 ## Acceptance criteria
 
 - [x] A TLS listener whose context lists `h2` serves h2 to a client that selects it by
