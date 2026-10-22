@@ -64,7 +64,7 @@ zrk=${ZRK:-$cache/zrk-$ZRK_VERSION/zrk}
 
 case ${1:-} in
 build)
-    mkdir -p "$bin" "$data"
+    mkdir -p "$bin" "$data" "$cache"
     goose=$GOOSE
     "$goose" build --cc gcc --standalone -o "$bin/gen" "$root/bench/rest/gen.goose"
     "$bin/gen" "$data"
