@@ -168,11 +168,20 @@ fn h2_release<S, H>(h: H2Conn&, streams: H2Stream<S>[>..]&, spill: u8[>..]&, tim
     h.fb = h.fb[..0];
 }
 
+// Ends a wait that no WAKE or TIMEOUT ends, as its stream closes or its
+// handler answers: io_uring's poll of a socket wait_socket armed for it would
+// hold the socket open after the handler hangs it up.
+fn h2_unwait(s: Stream&) {
+    guard s.waiting else { return; }
+    s.waiting = false;
+    net_disarm(s.later.key);
+}
+
 // Calls H with CLOSED for stream st, if it was owed another call.
 fn h2_abandon<S, H>(st: H2Stream<S>&, fd: i32) {
     let x .= st.x;
     let owed = st.called && (x.stream.open || x.stream.waiting || (!st.remote_closed && !x.answered) || st.end_owed);
-    x.stream.waiting = false;
+    h2_unwait(x.stream);
     retire(x.stream);
     guard owed else { return; }
     var sink: u8[>..] = [];
@@ -186,7 +195,7 @@ fn h2_abandon<S, H>(st: H2Stream<S>&, fd: i32) {
 // Gives back a stream's runs and timer; the caller frees its pool element.
 fn h2_free(st, spill: u8[>..]&, timers: Timers&) {
     cancel(timers, st.x.timer);
-    st.x.stream.waiting = false;
+    h2_unwait(st.x.stream);
     retire(st.x.stream);
     if st.rq.len > 0 { spill.free_slice(st.rq); }
     if st.head.len > 0 { spill.free_slice(st.head); }
@@ -490,7 +499,7 @@ fn h2_answer<S, H, C>(c: C&, slot: i64, h: H2Conn&, streams: H2Stream<S>[>..]&, 
                                    head: st.x.head, stream: st.x.stream, fd: c.fd });
         let wrote = bout.len > 0;
         if (wrote || was_open) && st.x.stream.waiting && !st.x.stream.open {
-            st.x.stream.waiting = false;
+            h2_unwait(st.x.stream);
             st.x.stream.rearm = false;
         }
         retire(st.x.stream);

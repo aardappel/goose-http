@@ -539,6 +539,9 @@ int32_t net_arm(int32_t fd, uint32_t events, uint64_t tag) {
     return 0;
 }
 
+/* Nothing to cancel: closing a socket deletes its filters. */
+void net_disarm(uint64_t tag) { (void)tag; }
+
 int32_t net_epoll_create(void) {
     int r = kqueue();
     if (r < 0) return -net_err(errno);

@@ -374,6 +374,8 @@ int32_t net_arm(int32_t fd, uint32_t events, uint64_t tag) {
     return -NET_ENOSYS;
 }
 
+void net_disarm(uint64_t tag) { (void)tag; }
+
 int32_t net_epoll_create(void) { return -NET_ENOSYS; }
 
 int32_t net_epoll_ctl(int32_t ep, int32_t op, int32_t fd, uint32_t events, uint64_t tag) {

@@ -163,7 +163,7 @@ static _Thread_local struct ur *ur_bound;
 int64_t net_waker(int32_t ep, uint64_t tag);
 int32_t net_waker_fd(int64_t w);
 void net_waker_clear(int64_t w);
-void net_loop_ring(int32_t (*arm)(int32_t fd, uint32_t events, uint64_t tag));
+void net_loop_ring(int32_t (*arm)(int32_t fd, uint32_t events, uint64_t tag), void (*disarm)(uint64_t tag));
 
 /* shim/ring_epoll.c, built with its functions named urp_*. */
 int64_t urp_create(int32_t entries, int32_t nbufs, int32_t buflen, int32_t flags);
@@ -639,15 +639,17 @@ static int32_t ur_arm(int32_t fd, uint32_t events, uint64_t key) {
     return 0;
 }
 
-/* Makes net_arm, on the calling thread, arm sockets on ring h, with
-   completions of tag, until h is destroyed. The emulation isn't bound, and
-   net_arm stays ENOSYS on it. */
+static void ur_disarm_bound(uint64_t key);
+
+/* Makes net_arm and net_disarm, on the calling thread, arm sockets on ring h,
+   with completions of tag, until h is destroyed. The emulation isn't bound,
+   and net_arm stays ENOSYS on it. */
 void ur_bind(int64_t h, uint64_t tag) {
     if (UR_EMULATED(h)) return;
     struct ur *u = (struct ur *)(intptr_t)h;
     u->stag = tag;
     ur_bound = u;
-    net_loop_ring(ur_arm);
+    net_loop_ring(ur_arm, ur_disarm_bound);
 }
 
 static void ur_arm_free(struct ur *u, int32_t k) {
@@ -675,6 +677,11 @@ void ur_disarm(int64_t h, uint64_t key, uint64_t mask) {
         a->state = UR_ARM_STALE;
         u->live--;
     }
+}
+
+/* net_disarm's: the sockets armed for key on the bound ring. */
+static void ur_disarm_bound(uint64_t key) {
+    ur_disarm((int64_t)(intptr_t)ur_bound, key, ~(uint64_t)0);
 }
 
 /* The key of the armed socket whose completion had buf k, or 0 when it was
@@ -851,7 +858,7 @@ void ur_destroy(int64_t h) {
     free(u->arms);
     if (ur_bound == u) {
         ur_bound = NULL;
-        net_loop_ring(NULL);
+        net_loop_ring(NULL, NULL);
     }
     free(u);
 }

@@ -110,6 +110,10 @@ extern fn net_loop_bind(ep: i32);
 // io_uring ring that ring_bind bound on Linux, with a one-shot poll. -ENOSYS
 // on a thread that runs neither.
 extern fn net_arm(fd: i32, events: u32, tag: u64) -> i32;
+// Cancels what net_arm armed for tag on that io_uring ring, whose poll holds
+// the socket open until its event. Nothing elsewhere: closing a socket takes
+// it out of an epoll or kqueue poller.
+extern fn net_disarm(tag: u64);
 
 extern fn net_epoll_create() -> i32;
 // The kernel keeps tag with fd's registration and returns it in PollEvent.tag.

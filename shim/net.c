@@ -369,13 +369,22 @@ void net_loop_bind(int32_t ep) {
     net_loop_ep = ep;
 }
 
-/* How the io_uring ring the calling thread runs arms a socket, if it runs
-   one: shim/uring.c's ur_bind sets it, so a program without uring.c, such as
-   a mail test, links. */
+/* How the io_uring ring the calling thread runs arms a socket and disarms a
+   key, if it runs one: shim/uring.c's ur_bind sets them, so a program
+   without uring.c, such as a mail test, links. */
 static _Thread_local int32_t (*net_loop_arm)(int32_t fd, uint32_t events, uint64_t tag);
+static _Thread_local void (*net_loop_disarm)(uint64_t tag);
 
-void net_loop_ring(int32_t (*arm)(int32_t fd, uint32_t events, uint64_t tag)) {
+void net_loop_ring(int32_t (*arm)(int32_t fd, uint32_t events, uint64_t tag), void (*disarm)(uint64_t tag)) {
     net_loop_arm = arm;
+    net_loop_disarm = disarm;
+}
+
+/* Cancels what net_arm armed for tag on the calling thread's io_uring ring,
+   whose poll would hold the socket open. Nothing on epoll: closing a socket
+   takes it out of the poller. */
+void net_disarm(uint64_t tag) {
+    if (net_loop_disarm) net_loop_disarm(tag);
 }
 
 /* Watches fd on the calling thread's loop for events once: its next event

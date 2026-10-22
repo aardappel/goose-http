@@ -1,8 +1,8 @@
 # 053: Outbound connections
 
 Status: in-progress (asked for 2026-10-19). The blocking socket and the epoll, kqueue,
-and io_uring loops' half are built, io_uring's on 2026-10-22. See "Handover" at the
-end for what remains.
+and io_uring loops' half are built, io_uring's on 2026-10-22, h2 streams that wait
+included. See "Handover" at the end for what remains.
 
 The loop opens TCP connections to other servers, not only accepts them. goose-postgres
 needs them (its task 001), and so do the ACME package's requests to its directory over
@@ -37,8 +37,8 @@ goose-postgres's blocking facade (its task 002) takes that socket as its transpo
 - [x] The API and the owning thread recorded in `docs/decisions.md` and `docs/api.md`
 - [ ] Connect, read, write, and close work on epoll, io_uring, kqueue, and IOCP, each
       with a test (epoll, kqueue, and io_uring done, io_uring with a test of its
-      stale poll and of a socket hung up at `TIMEOUT`; the emulated ring and IOCP fail
-      with `ENOSYS`)
+      stale poll and of a socket hung up at `TIMEOUT`, and each over h2c with a stream
+      reset while it waits; the emulated ring and IOCP fail with `ENOSYS`)
 - [x] A refused connection and a connect timeout reach the program as errors
 - [ ] A blocking socket for lanes, with a test, on Linux, macOS, and Windows (Linux and
       macOS pass; Windows's shim compiles, with Zig's MinGW target, but hasn't run)
@@ -105,10 +105,16 @@ On 2026-10-19, at Goose `dcc2747`, the pin:
    `test/outbound/` there for now: `outbound_loop.goose` needs `serve_epoll` and a Unix
    socket, and Windows may refuse a connect to a full backlog with `ECONNREFUSED` where
    the blocking test expects `ETIMEDOUT`.
-6. An h2 stream waiting on a socket: `delivered` finds it by its key, but no test covers
-   it yet. On io_uring, a stream reset while it waits leaves its poll armed until the
-   socket's event or the connection's close: its key matches no later wait, but the
-   poll holds a socket the handler hung up at `CLOSED` open until then.
+6. ~~An h2 stream waiting on a socket~~: built 2026-10-22; see "io_uring" below.
+7. On io_uring, an HTTP/1.1 handler that calls `wait_socket` and then answers in the
+   same call doesn't wait, and its poll stays armed until the socket's event, past
+   the connection's close: `close_conn` disarms only while an exchange waits. A
+   handler that hangs up the socket then keeps it open until that event. h2's
+   `call` disarms in that case; HTTP/1.1's `unwait` could call `net_disarm` too,
+   if a count shows it costs the request path nothing.
+8. h2's 413, for a body past `Config.max_body`, closes the stream through `local_end`
+   without `CLOSED` to its handler (read in `h2.goose`, not tested), so a socket the
+   handler holds, waiting or not, is never hung up.
 
 ### io_uring
 
@@ -128,6 +134,17 @@ Built 2026-10-22
   exchange waits or the connection is h2c. The call sits in `resume` once: one in each
   of `delivered`'s and `timed_out`'s paths cost `/plaintext` 2 user instructions per
   request on io_uring, though none runs there.
+- An h2 stream's wait can end without `resume`: the client resets the stream, the
+  server resets it or answers it 413, or its handler answers in the call that
+  waited. `h2_unwait` in `h2.goose` ends each and calls `net_disarm(key)`, which
+  `ur_bind` points at the bound ring's `ur_disarm`; on epoll, kqueue, the emulated
+  ring, and IOCP it does nothing, since closing a socket takes it off epoll's or
+  kqueue's poller, and a stream's key, with its own generation, matches no later
+  stream's wait. Only a stream that waits makes the call. Under cachegrind, one
+  worker on arm64 Linux in Docker, user instructions per request, before and after:
+  `/plaintext` 2672.9 and 2672.9 on epoll, 2729.1 and 2729.5 on io_uring; the REST
+  server's `/api/me`, without `X-User-Id`, so a 4xx, 4590.0 and 4590.0 on epoll,
+  4611.9 and 4611.5 on io_uring.
 - The emulated ring and IOCP get no-op `ur_bind`, `ur_socket`, and `ur_disarm`, and
   `wait_socket` stays `ENOSYS` there.
 - `test/outbound/outbound_loop.goose` runs every route on `serve` too, and on io_uring
@@ -135,6 +152,11 @@ Built 2026-10-22
   wake the next wait, and `/hangup`, a socket hung up at `TIMEOUT`, which the backend
   must see closed before it takes the next connection. With `ur_disarm` made a no-op,
   both fail. On the emulated ring each route checks the `ENOSYS`.
+- The test runs an h2c listener on `serve_epoll` and on `serve`: `/reset` sends part
+  of its response, waits on a backend that never answers, and the client resets the
+  stream; `/answered` waits and answers in the same call; a `/ping` after each must
+  reach the backend, which serves one connection at a time. With `net_disarm` made a
+  no-op, both `/ping`s on io_uring time out.
 
 ### What goose-postgres's facade calls
 

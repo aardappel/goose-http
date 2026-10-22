@@ -2,6 +2,15 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
+## Unreleased
+
+Fixed:
+
+- On io_uring, an h2 stream reset while it waits on `http::wait_socket`, or answered in
+  the call that waited, cancels the socket's poll, which held a socket the handler hung
+  up open until its next event or the connection's close. `test/outbound/` tests both
+  over h2c on every loop where `wait_socket` works.
+
 ## v0.5.0 (2026-10-22)
 
 Conveniences split into public parts, a budget for the gather pool, and TLS and

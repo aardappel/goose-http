@@ -5,6 +5,10 @@
 /timeout: HTTP/1.1 504 Gateway Timeout: connect timed out
 /hangup: HTTP/1.1 200 OK: hung up
 /ping: HTTP/1.1 200 OK: pongpong
+h2 /reset: waiting
+h2 /ping: pongpong
+h2 /answered: answered
+h2 /ping: pongpong
 serve /ping: true
 serve /large: true
 serve /closes: true
@@ -13,3 +17,4 @@ serve /timeout: true
 serve /stale: true
 serve /hangup: true
 serve /ping: true
+serve h2: true
