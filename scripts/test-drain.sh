@@ -1,0 +1,12 @@
+#!/bin/sh
+# Builds and tests mailbox and direct drain publishers on the two Unix loops.
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+. "$root/scripts/goose.sh"
+"$GOOSE" build --cc "${CC:-gcc}" --standalone -o "$root/build/drain-turns" \
+    "$root/scripts/fixtures/drain_turns.goose"
+python3 "$root/scripts/test-drain-turns.py" "$root/build/drain-turns"
+if [ "$(uname -s)" = Linux ]; then
+    "$GOOSE" build --cc "${CC:-gcc}" --standalone -o "$root/build/drain" "$root/examples/drain.goose"
+    python3 "$root/scripts/test-drain.py" "$root/build/drain"
+fi

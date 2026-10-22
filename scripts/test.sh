@@ -70,6 +70,13 @@ done
 step "test/run_tests.py"
 python3 "$root/test/run_tests.py"
 
+case $os in
+Linux | Darwin)
+    step "test-drain.sh"
+    sh "$root/scripts/test-drain.sh"
+    ;;
+esac
+
 # The first test-http.sh run has the full load runs, and the others short ones
 # (LOAD=short): a loop's failure under load shows in either.
 load=full

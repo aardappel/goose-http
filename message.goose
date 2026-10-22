@@ -508,7 +508,8 @@ fn raw(s: const Stream&) -> bool {
 // Requests one DRAINED after the bytes sent on this upgraded connection have
 // left the loop's output queue. Call after send/ws_send and wait for DRAINED
 // before accepting another bounded batch. This is socket acceptance, not an
-// acknowledgement from the peer. Repeated requests coalesce; closing cancels it.
+// acknowledgement from the peer. A request without intervening sends returns
+// false and leaves any pending notification intact. Closing cancels it.
 fn after_drain(out: Reply) -> bool {
     guard out.stream.open && raw(out.stream) && out.stream.moved else { return false; }
     out.stream.framing = Framing.RawDrain;
@@ -791,7 +792,7 @@ struct Stream {
     bodyless: bool = false, // a status that has no body
     open: bool = false,     // begun and not yet ended
     in_head: bool = false,  // begun, without the blank line after the head yet
-    moved: bool = false,    // send was given bytes, which HEAD and a bodyless status drop
+    moved: bool = false,    // send was given bytes (even for HEAD/bodyless); on Raw, since after_drain
     framing: Framing = Framing.Close,
     status: i32 = 0,        // what start was last given
     // later's: the exchange waits for a WAKE or its TIMEOUT, and rearm says

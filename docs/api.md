@@ -394,14 +394,19 @@ thread_fn worker(cfg: http::Config) {
   connection's output queue empties into its socket. Call it after `send` or
   `ws_send`, and accept the next bounded batch only at `DRAINED`. It returns false
   without an open upgraded stream or bytes sent since the previous request.
-  Repeated requests coalesce, and `CLOSED` replaces the notification if the
-  connection fails. A pending `later` mailbox wait and its deadline stay armed.
+  A second request without intervening sends returns false and leaves the first
+  notification pending. Sends followed by another successful request still owe
+  only one notification. `CLOSED` replaces it if the connection fails. A pending
+  `later` mailbox wait and its deadline stay armed. Sending the next bounded batch
+  from `DRAINED` is supported; the readiness loop gives at most one drain credit
+  per connection turn before serving other connections and timers.
   Socket acceptance does not mean the peer processed the bytes. This API does not
   limit arbitrary calls to `ws_send`: the program must bound its batches and
   producer queues. See `examples/drain.goose` for a mailbox publisher that sends
-  one 8 KiB batch per drain credit. On Linux, build that example and run
-  `python3 scripts/test-drain.py /path/to/drain` to test a stalled reader's memory,
-  resumed frame ordering, and disconnect cleanup on both loops.
+  one 8 KiB batch per drain credit. `sh scripts/test-drain.sh`, also run by
+  `scripts/test.sh` on Unix, checks fair turns and timeout refresh on both loops.
+  On Linux it also checks a stalled reader's memory, resumed frame ordering,
+  and disconnect cleanup.
 - `http::ws_close(out, st.ws, code, reason)` starts the close: 1000 and no reason by
   default. Messages that arrive after are dropped, and the connection closes when the
   client's Close comes, or after `Config.idle_ms`.
