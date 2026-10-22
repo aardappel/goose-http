@@ -27,9 +27,9 @@ struct Board {
     epoll: bool = false,
 }
 
-// One stream of temperatures: how many events are left, -1 for no end, how
-// far apart they are, and when the next is due, in milliseconds.
-struct Watch { left: i64 = 0, ms: i64 = 1000, due: i64 = 0 }
+// One stream of temperatures: how many events are left, -1 for no end, and how
+// far apart they are, in milliseconds.
+struct Watch { left: i64 = 0, ms: i64 = 1000 }
 
 // The C side keeps the line it opens, for every worker to set and read.
 extern fn board_gpio_open(chip: const u8[:], line: i32) -> i32;
@@ -53,9 +53,8 @@ fn handle(ev: http::Event, st: Watch&, out: http::Reply, b: const Board&) {
     if ev.kind == http::REQUEST {
         answer(ev.req, st, out, b);
     } else if ev.kind == http::TIMEOUT {
-        // A TIMEOUT well before its time is the loop's own: there's no room
-        // for another exchange to wait (Config.max_waiting).
-        guard now_ms() >= st.due - st.ms / 2 else { http::end(out); return; }
+        // No room for another exchange to wait (Config.max_waiting).
+        guard ev.tag != http::NO_ROOM else { http::end(out); return; }
         reading(st, out, b);
     }
 }
@@ -153,7 +152,6 @@ fn reading(st: Watch&, out: http::Reply, b: const Board&) {
     http::send(out, text);
     if st.left > 0 { st.left--; }
     guard st.left != 0 else { http::end(out); return; }
-    st.due = now_ms() + st.ms;
     http::later(out, st.ms);
 }
 
@@ -176,8 +174,6 @@ fn query_or(target: const u8[:], key: const u8[:], otherwise: i64) -> i64 {
     let n, ok = parse_int(v);
     return if ok { n } else { otherwise };
 }
-
-fn now_ms() -> i64 { clock_ns() / 1000000 }
 
 // The environment variable name into to, which it must fit.
 fn setting(name: const u8[:], to: u8[..128]&) {
