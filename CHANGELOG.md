@@ -8,6 +8,9 @@ Added:
 
 - `http::file_tag(f)`, the `ETag` that `serve_file` sends, which `serve_file` now
   calls, so a program that answers a 304 or 416 itself can match it.
+- `http::take_compressed(z, coding, c)`, which takes and resets an encoder from the
+  worker's pool, and which `begin_compressed` now calls once it has written the head,
+  so a program that writes its own head can stream compressed.
 
 Fixed:
 

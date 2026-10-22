@@ -4,3 +4,4 @@ left alone: no Accept-Encoding, 206, HEAD, 304, a short body, an image
 streamed gzip: flushed pieces, chunked
 the pool: slots 0 and 1, then 0 again
 streamed zstd, and identity: plain
+take_compressed under a head of the program's own: 81 bytes, as begin_compressed's

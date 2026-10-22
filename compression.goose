@@ -167,6 +167,16 @@ fn begin_compressed(out: Reply, req: const Request&, status: i32, content_type: 
     let coding = coding_for(req, c);
     guard coding != Coding.Identity else { return; }
     out.buf.append(coding_field(coding));
+    take_compressed(z, coding, c);
+}
+
+// Takes an encoder for coding from the worker's pool into z, reset for a new
+// body, for a program that writes the response's head itself, with
+// coding_field's line; begin_compressed is both. z holds none yet: a fresh
+// Compressed, or one release_compressed gave back. For Identity, z takes
+// none, and send_compressed sends the pieces as they are.
+inline fn take_compressed(z: Compressed&, coding: Coding, c: Compression = Compression { .. }) {
+    guard coding != Coding.Identity else { return; }
     z.coding = coding;
     if coding == Coding.Zstd {
         z.slot = lend(zstds_busy);

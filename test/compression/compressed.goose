@@ -179,6 +179,24 @@ fn test_stream() {
     unchunk(out[mn..], plain);
     assert(plain == "plain" && value_of(out[mn..], "Vary") == "Accept-Encoding");
     print("streamed zstd, and identity: ", plain);
+
+    // A head of the program's own, and take_compressed: the same body as
+    // begin_compressed's.
+    let mo = out.len;
+    let coding = http::coding_for(r, http::Compression { .. });
+    http::begin(c, 200, -1);
+    c.buf.append(http::coding_field(coding));
+    http::take_compressed(z, coding);
+    assert(z.coding == http::Coding.Gzip && z.slot == 0);
+    http::send_compressed(c, z, t[..1000]);
+    http::send_compressed(c, z, t[1000..]);
+    http::end_compressed(c, z);
+    var own: u8[>..] = [];
+    unchunk(out[mo..], own);
+    assert(own == gz && value_of(out[mo..], "Content-Encoding") == "gzip");
+    http::take_compressed(z, http::Coding.Identity);
+    assert(z.slot == -1 && z.coding == http::Coding.Identity);
+    print("take_compressed under a head of the program's own: ", own.len, " bytes, as begin_compressed's");
 }
 
 fn main() {

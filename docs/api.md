@@ -217,7 +217,11 @@ that answers in its own shape
   `Accept-Encoding` gives a coding, in thousandths; `http::compressible(type)`,
   whether a body of that type is worth compressing; `http::coding_field(coding)`, its
   `Content-Encoding` line; and `http::compress_whole(data, out, coding, c)`, which
-  appends `data` compressed.
+  appends `data` compressed. `begin_compressed`, for a response sent in pieces, adds
+  `http::take_compressed(z, coding, c)`, which takes an encoder for `coding` from the
+  worker's pool into a `Compressed` that holds none, and resets it, for a head the
+  program writes itself; `send_compressed`, `end_compressed`, and
+  `release_compressed` then work as after `begin_compressed`.
 - `http::status_line(status)`: the status line with its CRLF, or "" for a status
   without a listed reason phrase. `http::write_body(out, fields, body, head_only)`:
   writes `fields`, which end in `Content-Length: `, the body's length, and the body.

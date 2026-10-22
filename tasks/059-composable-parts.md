@@ -110,9 +110,18 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
     for the first told them apart by the clock (goose-rest's `rest::pause` and
     `on_event`). Change: the tag `NO_ROOM` on the second. Done, in `timed_out`, which
     runs per `TIMEOUT`, not per request.
-13. [ ] **`begin_compressed` takes and resets a worker's pooled encoder** as it
+13. [x] **`begin_compressed` takes and resets a worker's pooled encoder** as it
     writes the response's head. A program that builds its own head can't take the
-    encoder alone. Recorded; no framework asks for it yet.
+    encoder alone. Recorded; no framework asks for it yet. Done (2026-10-22):
+    `inline fn take_compressed(z, coding, c)`, which `begin_compressed` calls after its
+    head. Like `gather_promise`, it takes a `Compressed` that holds none, so
+    `begin_compressed` releases once, as before. Goose inlines it, and the C differs
+    only in the copies of its parameters; the machine code differs in block layout.
+    Built with Apple clang, `-O2`, `examples/compress`'s `begin_compressed` is 426
+    instructions, from 423; with gcc 15 for x86-64, its handler, which takes in
+    `begin_compressed`, is 1,678, from 1,681. Either is once a streamed response,
+    not once a request. A `const Compression&` saved one instruction on clang, but a
+    reference can't take a default.
 14. [ ] **`open_precompressed(req, path)`** negotiates, probes the files, picks the
     fresher, and closes the ones it doesn't use. Its parts exist, `coding_q` now
     listed. Recorded, as item 13.
