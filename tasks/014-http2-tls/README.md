@@ -91,7 +91,8 @@ and duplicates its types.
    HPACK, flow control, and the stream scheduler in Goose. Without TLS, its cost is h2's
    alone. Test with h2spec and HttpArena's h2c profiles. Task 014.01 has the work and
    the design for the loops.
-5. ALPN `h2` over TLS: HttpArena's h2 baseline and static profiles.
+5. ALPN `h2` over TLS: HttpArena's h2 baseline and static profiles. Task 061 has the
+   work: it serves from both loops (2026-10-22), and HttpArena's profiles remain.
 
 Out of scope: HTTP/3 and QUIC (UDP, loss recovery, and QUIC-TLS: a project of its own),
 the `Upgrade: h2c` handshake, gRPC, and WebSocket over h2.

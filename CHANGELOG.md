@@ -6,6 +6,14 @@ What each tag adds. Each release names the Goose compiler it was built and teste
 
 Added:
 
+- h2 over TLS on both loops, chosen by ALPN: a TLS listener whose context lists `h2`,
+  as `tls::server_files(chain, key, ["h2", "http/1.1"])`, serves h2 to a client that
+  offers it and HTTP/1.1 to one that doesn't, on one port. No new name; a context
+  that lists only `http/1.1` serves as before. h2spec passes over TLS on both loops.
+  The benchmark server serves it on its port + 363 (8443 beside 8080, `H2_PORT`), from
+  workers of its own, and keeps ALPN `http/1.1` alone on its TLS port.
+- An idle h2 connection, h2c or over TLS, is sent GOAWAY before it closes, and over
+  TLS close_notify after it.
 - `http::file_tag(f)`, the `ETag` that `serve_file` sends, which `serve_file` now
   calls, so a program that answers a 304 or 416 itself can match it.
 - `http::take_compressed(z, coding, c)`, which takes and resets an encoder from the

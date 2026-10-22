@@ -241,9 +241,10 @@ upgraded bytes, so `wss://` needs nothing of its own.
 HTTP/2 is being built in Goose, as modules of `http`
 ([decisions](decisions.md#http2-is-modules-of-http-written-in-goose)). Both loops
 serve h2c, HTTP/2 with prior knowledge, on a listener with `Config.h2c` or a
-`Listener`'s `h2c`: `h2.goose`'s `h2_answer` takes such a connection's bytes in place
-of `answer`, with its state in pools outside the connection's slot, and a stream per
-exchange. It writes frames until its output reaches a limit the loop gives:
+`Listener`'s `h2c`, and h2 over TLS where ALPN chooses it ([TLS](#tls)): `h2.goose`'s
+`h2_answer` takes such a connection's bytes in place of `answer`, with its state in
+pools outside the connection's slot, and a stream per exchange. An idle h2 connection
+is sent GOAWAY before it closes. It writes frames until its output reaches a limit the loop gives:
 `Config.write_buffer` on epoll, and what `Config.max_queued` leaves on the completion
 loop, which then stops receiving until a send completes. A completion port keeps one
 accept, so on Windows `serve` takes one listener (`ring_listeners`). Two modules
@@ -266,7 +267,7 @@ beneath it work on bytes alone:
 
 ## TLS
 
-Both loops serve HTTP/1.1 over TLS 1.3 on a listener with `Config.tls` or a
+Both loops serve HTTP/1.1 and h2 over TLS 1.3 on a listener with `Config.tls` or a
 `Listener`'s `tls`, through [goose-tls](https://github.com/kaitk/goose-tls) and OpenSSL,
 from the optional module `http.tls` (`tls.goose`)
 ([decisions](decisions.md#tls-is-goose-tls-reached-from-the-module-httptls)). On
@@ -279,6 +280,18 @@ an `http::TlsServer` from `http.tls`'s `serve_epoll(cfg, fresh, server)` or
 a 16 KB buffer the socket's bytes are read into, and a slot per TLS connection, which
 `EpollConn.tls` or `RingConn.tls` names, -1 on a plain connection. A slot holds the
 `tls::Conn`, whether its handshake is done, and whether close_notify is queued.
+
+Which driver answers a TLS connection, `answer` or `h2_answer`, is the ALPN's choice
+([decisions](decisions.md#alpn-chooses-h2-over-tls)), which the loop asks for
+(`tls_h2`) when the first plaintext arrives and keeps in the connection's `h2`: -2 for
+HTTP/1.1, so later receives only compare. When the handshake chose h2, the loop
+allocates the connection's h2 state, as accept does for h2c, before any of the
+plaintext reaches `answer`: the epoll loop keeps the
+preface, stops the connection's turn, and lists it for another (`go`), now through
+`h2_answer`; the io_uring loop does it in `received`, so `feed` picks `pump_h2`. The h2
+frames pass through the record layer as HTTP/1.1's bytes do. An idle h2 connection
+is sent GOAWAY and close_notify after it; at a stop, close_notify follows the GOAWAY
+once the connection's streams are done.
 
 On the epoll loop, a TLS connection's bytes pass through its `tls::Conn` between the
 socket and the worker's buffers, and everything above them is unchanged:

@@ -54,7 +54,7 @@ goose-rest's first benchmark run on the desktop. The HTTP changes it needs are o
 |---|---|
 | 006: platform ports | Platform subtasks are done; the optional conditional-compilation goal remains unresolved. |
 | 012: macOS benchmarks | Complete the Docker matrix; retain the platform and client limits. |
-| 014: HTTP/2 and TLS | h2c serves from the epoll and io_uring loops (014.01), with a question open; HTTP/1.1 over TLS serves from the epoll and io_uring loops, passes HttpArena's validation, and is measured on json-tls and 8gbit (014.02, 2026-10-20). kTLS was retired (2026-10-22, goose-tls's task 007); h2 over TLS remains. |
+| 014: HTTP/2 and TLS | h2c serves from the epoll and io_uring loops (014.01), with a question open; HTTP/1.1 over TLS serves from the epoll and io_uring loops, passes HttpArena's validation, and is measured on json-tls and 8gbit (014.02, 2026-10-20). kTLS was retired (2026-10-22, goose-tls's task 007); h2 over TLS serves from both loops (task 061, 2026-10-22), and HttpArena's h2 profiles remain. |
 | 016: worker memory | Finish source accounting, reductions, and the Goose-side question. |
 | 017: IOCP speed | Read the kernel trace and evaluate candidates against the recorded baseline. |
 | 022: compression | Record approval of the implemented boundary and finish outstanding platform validation. |
@@ -70,6 +70,7 @@ goose-rest's first benchmark run on the desktop. The HTTP changes it needs are o
 | 048: packages spawn threads | On `main` on a pinned Goose commit; the README's quick start waits for a release. |
 | 053: outbound connections | goose-postgres and the ACME package's HTTPS requests wait on it (goose-rest's task 047). |
 | 054: WebSocket | Built and tested, Autobahn included; HttpArena's echo-ws benchmark runs remain. |
+| 061: h2 over TLS | Serves from both loops, chosen by ALPN; HttpArena's baseline-h2 waits for goose-tls's own server, and static-h2 is deferred. |
 | 062: io_uring's request cost | Since TLS on io_uring, plaintext `/api/me` costs +22 instructions there; explain it and remove it, or record why it stays. |
 
 Tasks 013 and 018 have completed acceptance criteria and are archived with the other

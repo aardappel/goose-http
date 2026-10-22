@@ -102,7 +102,9 @@ build/server echo-epoll 8080      # an echo server on one edge-triggered epoll l
 
 The HTTP server also serves h2c, HTTP/2 with prior knowledge, on the port + 2 (8082
 beside 8080, as HttpArena has them), on every loop but IOCP. `H2C_PORT` names another
-port, and `H2C_PORT=0` turns it off.
+port, and `H2C_PORT=0` turns it off. The TLS build, with `TLS_CERT` and `TLS_KEY`,
+serves HTTP/1.1 over TLS on the port + 1 (`TLS_PORT`), and h2 or HTTP/1.1 over TLS, as
+ALPN chooses, on the port + 363 (`H2_PORT`, 8443 beside 8080).
 
 ### Run every test
 
@@ -116,7 +118,9 @@ port, and `H2C_PORT=0` turns it off.
    iocp on Windows. The uring and epoll loops' build is the TLS build (`TLS=1`), run
    with `LOOP` set to the loop, whose TLS listener the tests take too. After the epoll
    build's, `scripts/test-h2spec.sh`, which fetches
-   h2spec v2.6.0 into `build/` and runs it against the h2c port. h2spec's only builds
+   h2spec v2.6.0 into `build/` and runs it against the h2c port, and against the h2
+   over TLS port with `-t -k` and `GODEBUG=tls13=1`, since h2spec's Go 1.12 offers TLS
+   1.3 only when asked and the server speaks no other. h2spec's only builds
    are x86-64: on macOS it needs Rosetta 2, and on Linux on arm64 the step is skipped,
    with a note ([run it from an x86-64 container](#docker-on-macos)). With
    `AUTOBAHN=1`, after each build's, `scripts/test-autobahn.sh`, which needs Docker:
@@ -425,6 +429,10 @@ docker run -d --name h2c-srv ... sh -c 'LOOP=epoll scripts/build.sh && build/ser
 docker run --rm --platform linux/amd64 --network container:h2c-srv -v /tmp/h2spec:/h:ro \
     ubuntu:26.04 /h/h2spec -h 127.0.0.1 -p 29082 -P /plaintext -o 2
 ```
+
+For h2 over TLS, build with `TLS=1`, start the server with `TLS_CERT` and `TLS_KEY`,
+and run `GODEBUG=tls13=1 /h/h2spec -t -k -h 127.0.0.1 -p 29443 -P /plaintext -o 2`
+(`docker run -e GODEBUG=tls13=1 ...`).
 
 To compare two builds' instructions per request on a Mac, where `bench/count.sh`'s
 perf isn't, cross-build each server for arm64 Linux as `scripts/test-aarch64.sh` builds

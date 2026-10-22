@@ -836,10 +836,10 @@ IOCP. `H2C_PORT` names another port, and `H2C_PORT=0` turns it off.
 
 ### HTTPS
 
-Both loops serve HTTP/1.1 over TLS 1.3 on the listeners that ask for it, with
-[goose-tls](https://github.com/kaitk/goose-tls) over OpenSSL 3. Only a program that
-imports the module `http.tls` needs goose-tls, which its root file declares, and it
-builds with CMake and OpenSSL's headers
+Both loops serve HTTP/1.1 and h2 over TLS 1.3 on the listeners that ask for it, with
+[goose-tls](https://github.com/kaitk/goose-tls)'s TLS 1.3 server, written in Goose over
+OpenSSL 3's libcrypto. Only a program that imports the module `http.tls` needs
+goose-tls, which its root file declares, and it builds with CMake and OpenSSL's headers
 ([goose-tls's setup](https://github.com/kaitk/goose-tls/blob/main/docs/development.md#openssl)):
 
 ```rust
@@ -857,7 +857,7 @@ thread_fn worker(cfg: http::Config, ctx: tls::Context) {
 }
 
 fn main() {
-    let ctx, ok = tls::server_files("server.crt", "server.key", ["http/1.1"]);
+    let ctx, ok = tls::server_files("server.crt", "server.key", ["h2", "http/1.1"]);
     guard ok else { write_stderr(str(tls::error_text(), "\n")); exit(1); }
     var cfg = http::Config { port: 8080, .. };
     cfg.listeners.push(http::Listener { port: 8443, tls: true });
@@ -866,12 +866,23 @@ fn main() {
 }
 ```
 
-- `Config.tls`, or a `Listener`'s `tls`, makes a port serve HTTP/1.1 over TLS; the
-  others go on serving HTTP/1.1 or h2c, from the same workers.
+- `Config.tls`, or a `Listener`'s `tls`, makes a port serve TLS; the others go on
+  serving HTTP/1.1 or h2c, from the same workers.
 - `http::tls_server(ctx)` gives a worker its `http::TlsServer`, with its own reference
   to the context, which `http::release(server)` frees once the loop has returned.
   The context is goose-tls's: a certificate chain and key, from PEM files or text,
-  TLS 1.3 only, and the ALPN protocols to offer, `http/1.1` here.
+  TLS 1.3 only, and the ALPN protocols to offer, in the order the server prefers them.
+- ALPN chooses each connection's protocol, from the context's list. Where it lists
+  `h2`, as above, a client that offers `h2` gets h2, and one that offers only
+  `http/1.1`, or no ALPN, gets HTTP/1.1, on the same port. With `["http/1.1"]` every
+  client that connects gets HTTP/1.1. A client that offers ALPN but none of the list,
+  such as one offering only `h2` to `["http/1.1"]`, is refused with
+  `no_application_protocol` (RFC 7301 §3.2). The `Config.h2_*` settings apply to h2
+  over TLS as to h2c, and so does the rest of [h2c](#several-ports-and-h2c)'s
+  behavior: handlers don't change, and a stop sends GOAWAY.
+- A loop's TLS listeners share its one context, and so one ALPN list. A program that
+  wants `h2` on one port and only `http/1.1` on another runs a second set of workers
+  with a second context, as the benchmark server does.
 - `http::serve(cfg, server) { req, body, out => ... }` and
   `http::serve(cfg, fresh, server) { ev, st, out => ... }` are the two `serve`s with
   the TLS of the listeners that ask for it, and `http::serve_epoll` takes the same
@@ -882,11 +893,13 @@ fn main() {
 Handlers don't change, and neither do the limits and timeouts, but for the handshake:
 a client has `Config.request_ms` from its connection to finish it. A connection that
 closes after its response sends close_notify, and so does an idle one that times out
-or is closed by a stop. Files are read in pieces rather than sent by `sendfile` or
-splice. h2 over TLS is still to come.
+or is closed by a stop; an h2 connection sends GOAWAY first. Files are read in pieces
+rather than sent by `sendfile` or splice.
 
 The benchmark server's TLS build (`scripts/build.sh` with `TLS=1`) serves TLS on its
 port + 1, as HttpArena's 8081 is beside 8080, with either loop, when `TLS_CERT` and
-`TLS_KEY` name a PEM certificate chain and its key. `TLS_PORT` names another port, and
-`TLS_PORT=0` turns it off.
+`TLS_KEY` name a PEM certificate chain and its key, with ALPN `http/1.1` alone, as
+HttpArena asks of 8081. It serves h2 or HTTP/1.1 over TLS, as ALPN chooses, on its
+port + 363, as HttpArena's 8443 is beside 8080, from a second context and a second set
+of workers. `TLS_PORT` and `H2_PORT` name other ports, and 0 turns either off.
 

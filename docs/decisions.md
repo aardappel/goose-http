@@ -780,6 +780,36 @@ connection's close, makes one call, which returns at once when nothing is armed.
 Rejected: a stale mark alone, which keeps a hung-up socket open; and a generation per
 wait in the tag, for which the key has no bits left.
 
+## ALPN chooses h2 over TLS
+
+Decided 2026-10-22, task 061. Replaces [TLS is a listener's
+mode](#tls-is-a-listeners-mode)'s "ALPN chooses nothing yet".
+
+A TLS listener serves h2 or HTTP/1.1, as the handshake's ALPN chose: h2 where the
+context's protocols list `h2` and the client offered it, HTTP/1.1 otherwise. The
+program decides by the list it gives goose-tls (`["h2", "http/1.1"]`), and goose-http
+adds no name. The loops choose the driver when the first plaintext arrives after the
+handshake, before the HTTP/1.1 parser sees it: the h2 driver's connection state is
+allocated then, as accept allocates it for h2c, and the h2 frames run over the record
+layer unchanged. An HTTP/1.1 connection over TLS pays one `tls::alpn` call, at its
+first plaintext, and a compare per receive after it, since the loop keeps the answer
+in the connection's `h2` (-2) rather than ask per receive: asking goose-tls each time
+cost 31 instructions a request. A plaintext program, whose loops take `NoTls`, pays
+nothing (task 061 has the counts). TLS on an h2c listener is still refused with
+`EINVAL`: h2c is h2 by prior knowledge, over TCP.
+
+An idle h2 connection, over TLS or not, is sent GOAWAY before it closes (RFC 9113
+§9.1), and over TLS close_notify after it, on both loops, as a stop already did. It
+then lingers as a refusal does.
+
+Rejected: a `Listener.h2` flag. ALPN is the context's, and a loop has one context for
+all its TLS listeners, so a flag could disagree with what the handshake advertised. A
+program that wants h2 on one port and only `http/1.1` on another runs a second set of
+workers with a second context. The benchmark server does, for HttpArena's 8443 (`h2`
+and `http/1.1`) beside 8081 (`http/1.1` alone, as HttpArena's json-tls and static-tls
+ask), at the cost of a second set of idle workers in each TLS profile. A context per
+listener would need a new name in the API.
+
 ## Not yet decided
 
 ### Compression in an optional module
