@@ -10,6 +10,7 @@
 # PORT picks the port (29080): keep it below the kernel's ephemeral range
 # (32768 and up), as for test-echo.sh. WORKERS sets the server's worker
 # count (4). KTLS=1, passed to the server, tests TLS through Linux's kTLS.
+# LOAD=short makes the load runs a tenth as long, for a run after a full one.
 # oha is looked for on PATH and in ~/.cargo/bin.
 #
 # On Windows, in Git Bash, it tests the IOCP build and leaves out the load
@@ -292,20 +293,21 @@ wrk_ok() {
     ! grep -E 'Socket errors' "$out" | grep -v 'connect 0, read 0, write 0,' || fail "wrk $1"
     grep -E 'requests in' "$out"
 }
-wrk -t 2 -c 64 -d 3 -s "$root/scripts/pipeline.lua" "$url/plaintext" -- 16 >"$out"
+if [ "${LOAD:-full}" = short ]; then secs=1 n1=20000 n2=50000; else secs=3 n1=200000 n2=500000; fi
+wrk -t 2 -c 64 -d "$secs" -s "$root/scripts/pipeline.lua" "$url/plaintext" -- 16 >"$out"
 wrk_ok plaintext
-wrk -t 2 -c 64 -d 3 "$url/json" >"$out"
+wrk -t 2 -c 64 -d "$secs" "$url/json" >"$out"
 wrk_ok json
-h2load --h1 -c 64 -m 16 -n 200000 "$url/plaintext" >"$out"
+h2load --h1 -c 64 -m 16 -n "$n1" "$url/plaintext" >"$out"
 grep -q 'succeeded, 0 failed, 0 errored, 0 timeout' "$out" || { cat "$out"; fail "h2load"; }
-grep -q 'status codes: 200000 2xx, 0 3xx, 0 4xx, 0 5xx' "$out" || { cat "$out"; fail "h2load"; }
+grep -q "status codes: $n1 2xx, 0 3xx, 0 4xx, 0 5xx" "$out" || { cat "$out"; fail "h2load"; }
 grep -E '^requests:' "$out"
 # A request count, not -z: at a deadline oha aborts the requests in flight
 # and lists them as errors.
-"$oha" -n 500000 -c 64 --no-tui "$url/json" >"$out"
+"$oha" -n "$n2" -c 64 --no-tui "$url/json" >"$out"
 grep -q 'Success rate:.100.00%' "$out" || { cat "$out"; fail "oha"; }
 ! grep -q 'Error distribution' "$out" || { cat "$out"; fail "oha"; }
-grep -q '\[200\] 500000 responses' "$out" || { cat "$out"; fail "oha"; }
+grep -q "\[200\] $n2 responses" "$out" || { cat "$out"; fail "oha"; }
 grep -E '\[200\]' "$out"
 echo "load: ok"
 

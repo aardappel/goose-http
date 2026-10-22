@@ -4,8 +4,8 @@
 # (test/run_tests.py, which typechecks and runs each one and reports every
 # failure among them), then each loop's build of the server
 # (scripts/build.sh) with scripts/test-http.sh against it, which tests h2c
-# too where the loop serves it, and TLS on each loop but iocp from the TLS
-# build (TLS=1),
+# too where the loop serves it, and TLS on each loop but iocp from one TLS
+# build (TLS=1), with full load runs on the first loop and short ones after,
 # scripts/test-h2spec.sh against each loop but iocp where h2spec has a binary,
 # and with AUTOBAHN=1, scripts/test-autobahn.sh against each build, which
 # needs Docker, then scripts/test-echo.sh, and scripts/test-examples.sh, which builds each
@@ -70,19 +70,25 @@ done
 step "test/run_tests.py"
 python3 "$root/test/run_tests.py"
 
+# The first test-http.sh run has the full load runs, and the others short ones
+# (LOAD=short): a loop's failure under load shows in either.
+load=full
+built=
 for loop in $loops; do
-    # The tests take the TLS listener too, from the TLS build, which serves
+    # The tests take the TLS listener too, from one TLS build, which serves
     # either loop as LOOP says at run time; IOCP has no TLS.
-    if [ "$loop" != iocp ]; then
-        step "TLS=1 build.sh, for the $loop loop"
-        TLS=1 LOOP=epoll "$root/scripts/build.sh"
-    else
+    if [ "$loop" = iocp ]; then
         step "LOOP=$loop build.sh"
         LOOP=$loop "$root/scripts/build.sh"
+    elif [ -z "$built" ]; then
+        step "TLS=1 build.sh, for every loop"
+        TLS=1 LOOP=epoll "$root/scripts/build.sh"
+        built=1
     fi
     drain
     step "test-http.sh, $loop loop"
-    LOOP=$loop "$root/scripts/test-http.sh"
+    LOAD=$load LOOP=$loop "$root/scripts/test-http.sh"
+    load=short
     [ "$loop" = iocp ] || h2spec "$loop"
     if [ "${AUTOBAHN:-}" = 1 ]; then
         drain
@@ -93,12 +99,12 @@ for loop in $loops; do
     if [ "$loop" = epoll ] && grep -qw tls /proc/sys/net/ipv4/tcp_available_ulp 2>/dev/null; then
         drain
         step "test-http.sh, epoll loop with kTLS"
-        KTLS=1 LOOP=epoll "$root/scripts/test-http.sh"
+        LOAD=short KTLS=1 LOOP=epoll "$root/scripts/test-http.sh"
     fi
     if [ "$loop" = uring ] && [ "$os" = Linux ]; then
         drain
         step "test-http.sh, uring loop over epoll"
-        LOOP=uring-epoll "$root/scripts/test-http.sh"
+        LOAD=short LOOP=uring-epoll "$root/scripts/test-http.sh"
         h2spec uring-epoll
     fi
 done
