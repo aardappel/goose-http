@@ -2,7 +2,10 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
-## Unreleased
+## v0.5.3 (2026-10-22)
+
+A TLS connection's context chosen per connection, for ACME's TLS-ALPN-01. Goose
+`v2026.3`, goose-hash `v0.0.4`, goose-tls `v0.0.5`, and goose-compress `v0.1.1`.
 
 Added:
 
