@@ -115,32 +115,45 @@ fn param(r: const Router&, name: const u8[:]) -> const u8[:] {
     return "";
 }
 
-// Answers a request that no route took: a method the server doesn't know
-// with 501 (RFC 9110 §9.1); a path router refused with 400; OPTIONS * with
-// 204, for the server as a whole (§9.3.7); OPTIONS with 204 and the Allow of
-// the routes whose path matched, any other method with 405 and that Allow;
-// and a path no route matched with 404.
+// The status for a request that no route took: 501 for a method the server
+// doesn't know (RFC 9110 §9.1); 400 for a path router refused; 204 for
+// OPTIONS *, for the server as a whole (§9.3.7), and for OPTIONS of a path
+// some route matched; 405 for another method there; and 404 for a path no
+// route matched. A 204 and a 405 carry r.allow in Allow when it isn't empty.
+fn unrouted(r: const Router&) -> i32 {
+    if !known_method(r.method) { return 501; }
+    if r.bad { return 400; }
+    if r.method == "OPTIONS" && r.path == "*" { return 204; }
+    if r.allow.len == 0 { return 404; }
+    return if r.method == "OPTIONS" { 204 } else { 405 };
+}
+
+// Answers a request that no route took, with unrouted's status. Each arm
+// starts a constant status, which the inline writers fold.
 fn otherwise(r: const Router&, out: Reply) {
-    if !known_method(r.method) {
-        start(out, 501);
-        finish(out, NO_TYPE, "");
-    } else if r.bad {
-        start(out, 400);
-        finish(out, NO_TYPE, "");
-    } else if r.method == "OPTIONS" && r.path == "*" {
-        start(out, 204);
-        finish(out, "", "");
-    } else if r.allow.len == 0 {
-        start(out, 404);
-        finish(out, NO_TYPE, "");
-    } else if r.method == "OPTIONS" {
-        start(out, 204);
-        field(out, "Allow", r.allow);
-        finish(out, "", "");
-    } else {
-        start(out, 405);
-        field(out, "Allow", r.allow);
-        finish(out, NO_TYPE, "");
+    match unrouted(r) {
+        204 => {
+            start(out, 204);
+            if r.allow.len > 0 { field(out, "Allow", r.allow); }
+            finish(out, "", "");
+        },
+        405 => {
+            start(out, 405);
+            field(out, "Allow", r.allow);
+            finish(out, NO_TYPE, "");
+        },
+        501 => {
+            start(out, 501);
+            finish(out, NO_TYPE, "");
+        },
+        400 => {
+            start(out, 400);
+            finish(out, NO_TYPE, "");
+        },
+        _ => {
+            start(out, 404);
+            finish(out, NO_TYPE, "");
+        },
     }
 }
 

@@ -51,7 +51,12 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
    `runtime.goose`, `otherwise` and `no_route`). Change: `unrouted(r) -> i32`, the
    status, with `r.allow` for `Allow`, and `otherwise` its composition with `start`,
    `field`, and `finish`. `otherwise` is inlined into the benchmark server's handler,
-   so its generated code must be compared first.
+   so its generated code must be compared first. Built (2026-10-22): `otherwise`
+   matches on `unrouted`'s status, each arm starting a constant one, which the inline
+   writers fold. The benchmark server and `examples/routes` keep the same functions,
+   and their machine code changes by +48 and −76 bytes (Apple clang, `-O2`); the
+   router test passes unchanged. Not landed until `bench/count.sh` on Linux shows
+   the 404 path's instructions per request unchanged (tier A's `/nothing`).
 6. [x] **`require_type(req, out, want)` and `accept_or_406(req, out, offers)` write
    415 and 406.** Their verdicts, `has_type` and `negotiate`, exist, but
    `docs/api.md` doesn't list them, and goose-rest calls `has_type`. Change: list them.
@@ -73,22 +78,35 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
     error body (goose-rest's is JSON with an error code by default, with RFC 9457
     problems as a preset). No small change exists: an event before each refusal adds a
     kind and grows `answer`, and Goose can't store a writer the program gives (spec
-    §7.6). Decided (2026-10-22): they stay as they are. They come before any route,
-    and a client that follows the protocol meets only the 413, which a framework
-    answers in its own shape at its routes' limits, below `Config.max_body`. Other
-    servers send these bodies empty or as plain text too. Should a framework need
-    them, an overload on the program's state type, which the loop's refusal calls,
-    costs nothing, as goose-rest's `rest::error_body` does.
+    §7.6). Decided (2026-10-22): they stay as they are, an engineering choice: RFC
+    9110 §15.5 recommends an explanation in a 4xx's body. They come before any route.
+    A legitimate request meets them past a deployment's ceiling, on a slow link, or
+    after a handler bug; the common one, a body past a route's limit, a framework
+    answers in its own shape below `Config.max_body`. Hyper and Actix also send
+    parser-level refusals with no body. Should a framework need its shape, `refuse`
+    could call an overload on the loop's state type, `fresh`'s before a request and
+    the exchange's during one, declared in `http`, as goose-rest's `rest::error_body`
+    is in `rest`; that needs `refuse` to take the state, and a comparison of the
+    generated code, before calling it free.
 11. [x] **Parts a framework already calls that `docs/api.md` doesn't list.** goose-rest
     calls `parse`, `refuse`, `status_line`, `write_body`, `known_method`,
     `is_routable`, `same_segment`, `has_type`, and `field_in`, and its test harness
-    builds a `Stream` and reads its `Framing`. Change: list them as parts, or name
-    what replaces each, so a change to one is an API change. Done.
+    builds a `Stream` and reads its `Framing`; its compression calls `compress_whole`,
+    `field_at`, and `same_name`. Change: list them as parts, or name what replaces
+    each, so a change to one is an API change. Done, with compression's parts,
+    `coding_for`, `coding_q`, `compressible`, and `coding_field`, which this audit
+    first called public though `docs/api.md` listed none.
 12. [x] **`TIMEOUT` meant two things**: `later`'s time passed, or no room to wait, so
     the exchange got it at once. A framework that answers 503 for the second and 504
     for the first told them apart by the clock (goose-rest's `rest::pause` and
     `on_event`). Change: the tag `NO_ROOM` on the second. Done, in `timed_out`, which
     runs per `TIMEOUT`, not per request.
+13. [ ] **`begin_compressed` takes and resets a worker's pooled encoder** as it
+    writes the response's head. A program that builds its own head can't take the
+    encoder alone. Recorded; no framework asks for it yet.
+14. [ ] **`open_precompressed(req, path)`** negotiates, probes the files, picks the
+    fresher, and closes the ones it doesn't use. Its parts exist, `coding_q` now
+    listed. Recorded, as item 13.
 
 Checked and left as they are:
 
@@ -99,10 +117,10 @@ Checked and left as they are:
   takes the body's piece, not the `Event`.
 - `whole(ev, out)`, the adapter that gives `serve(cfg)`'s handler its request and
   body. A framework uses the handler with state; its 413 is item 10's.
-- `respond_compressed` and `begin_compressed`, compositions of `coding_for`,
-  `compressible`, and `coding_field`, which are public. Their encoders are each
-  worker's, reached through the `Compressed` a handler holds, as goose-rest's
-  `compression.goose` does.
+- `respond_compressed`, a composition of `coding_for`, `compressible`,
+  `coding_field`, and `compress_whole`, listed as parts (item 11). Its encoders are
+  each worker's, reached through the `Compressed` a handler holds, as goose-rest's
+  `compression.goose` does; `begin_compressed` is item 13.
 
 ## WebSocket's parts
 
@@ -204,10 +222,12 @@ goose-rest does; a framework calls the parts and answers in its own shape.
 - **The budget bounds the pool's length**, as goose-rest's does, since that is what the
   worker keeps. The pool mirrors its runs, as `Budget.runs` does, only while a budget
   is set: a program that gathers without one pays a branch per run placed or freed.
-- **Checked or not is the caller's choice per run.** A run that may be refused, a body
-  or a collected reply, is checked; one that mustn't fail, a middleware's kept fields
-  or WebSocket's partial frame, isn't, but still counts toward the length the next
-  checked run sees.
+- **The budget is a promise: no run is placed past it unchecked.** Under a budget
+  every run is checked, and a run that doesn't fit is refused where a refusal has an
+  answer: a body at its head (503), a collected reply (502), a middleware's kept
+  fields at the request that keeps them (503), and WebSocket at its upgrade (open
+  question 5). A budget that counted some runs without refusing them could be passed,
+  and the worker would keep the higher length for its life (review, 2026-10-22).
 - **The parts take a run's place, `at` and `cap`, not a `Gather`**, so a framework
   stores a run in as few bytes as it likes, as goose-rest does for a reply.
 
@@ -242,9 +262,15 @@ Who gains:
    reserve, and Goose fill with zeros, a whole announced body: `max_conns` heads could
    reserve `max_conns` times `limit`. Recommended: exact runs at the head only under a
    budget; without one, growth that doubles but stops at the announced length.
-5. **Are WebSocket's runs checked?** `WebSocket.limit` bounds them per connection.
-   Checked, a refused frame would need a close code, 1011 or 1009. Recommended:
-   unchecked but counted.
+5. **How WebSocket's runs keep the promise.** `WebSocket.limit` bounds them per
+   connection. Either the upgrade is admitted only when the budget can hold the
+   connection's limit, held for the connection's life, so a frame never fails and a
+   full worker refuses the upgrade with 503; or each run is checked as a frame needs
+   it, and one that doesn't fit closes the connection with 1011. Recommended: the
+   first, the bound settled where a refusal costs the client least, as Tina reserves
+   an Isolate's memory when it's spawned. Open: whether a reservation that counts
+   bytes promised sits with a budget on the pool's length, or the budget then
+   counts both.
 6. **The convenience's refusal.** 503 with `Retry-After: 1` and a close, as goose-rest
    answers, or a 503 that keeps the connection while the rest is under
    `Config.max_drain`.

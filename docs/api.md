@@ -195,6 +195,18 @@ that answers in its own shape
 - `out.minor == http::H2_MINOR` on an HTTP/2 stream, where `upgrade` answers 501.
   `http::switched(out)`: switches the stream to an upgraded protocol's bytes, once a
   101's head the program wrote itself is whole.
+- `http::unrouted(r)`: the status `otherwise` answers a request no route took, 501,
+  400, 204, 405, or 404; a 204 or 405 carries `r.allow` in `Allow` when it isn't
+  empty.
+- `http::field_at(fields, pos)`: the field line at `pos`, its name and value, and
+  where the next starts, for walking fields. `http::same_name(a, b)`: whether two
+  field names are the same, ignoring case.
+- Compression's parts, which `respond_compressed` composes: `http::coding_for(req,
+  c)`, the coding the response takes; `http::coding_q(req, coding)`, the weight
+  `Accept-Encoding` gives a coding, in thousandths; `http::compressible(type)`,
+  whether a body of that type is worth compressing; `http::coding_field(coding)`, its
+  `Content-Encoding` line; and `http::compress_whole(data, out, coding, c)`, which
+  appends `data` compressed.
 - `http::status_line(status)`: the status line with its CRLF, or "" for a status
   without a listed reason phrase. `http::write_body(out, fields, body, head_only)`:
   writes `fields`, which end in `Content-Length: `, the body's length, and the body.
@@ -305,7 +317,9 @@ thread_fn worker(cfg: http::Config) {
   101, 426, 400, or 501; for 101, the request's `Sec-WebSocket-Key`; and otherwise the
   fields the refusal must carry, whole lines ending in `\r\n`, which a 426 needs.
   `http::ws_switch(out, key, protocol)` then writes the 101 and switches the
-  connection, here in a function the handler calls:
+  connection. It leaves out a `protocol` that isn't a valid field value, where
+  `ws_upgrade` answers 400; neither checks that the client offered it, which is the
+  program's choice. Here in a function the handler calls:
 
   ```rust
   let status, key, fields = http::ws_check(req, out.minor);
