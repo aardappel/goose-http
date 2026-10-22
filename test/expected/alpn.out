@@ -1,0 +1,12 @@
+server lists h2, http/1.1:
+  offers h2: h2
+  offers http/1.1: http/1.1
+  offers http/1.1 then h2: h2
+  offers nothing: http/1.1
+  offers spdy/3: refused
+server lists http/1.1:
+  offers h2: refused
+  offers http/1.1: http/1.1
+  offers http/1.1 then h2: http/1.1
+  offers nothing: http/1.1
+  offers spdy/3: refused

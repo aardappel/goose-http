@@ -1,6 +1,6 @@
 // What serve_epoll and serve with a TlsServer refuse before they open a
-// listener: a TLS listener without a context, and TLS on an h2c listener,
-// whose h2 over TLS is still to come.
+// listener: a TLS listener without a context, and TLS on an h2c listener:
+// h2c is h2 by prior knowledge, and over TLS ALPN chooses h2 (alpn.goose).
 import std;
 import http from "../../";
 import tls from "github.com/kaitk/goose-tls@v0.0.4";

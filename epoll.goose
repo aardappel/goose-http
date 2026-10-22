@@ -29,7 +29,8 @@ struct EpollConn<S> {
     watch_out: bool,    // OUT is registered: set while out holds bytes
     ready: bool,        // stopped reading at cfg.max_read, with the socket not empty
     listed: bool,       // in turns
-    h2: i32 = -1,       // an h2c connection's H2Conn, in the worker's pool; -1 for HTTP/1.1
+    h2: i32 = -1,       // an h2 connection's H2Conn, in the worker's pool; -1 for HTTP/1.1,
+                        // and -2 for HTTP/1.1 that a TLS handshake's ALPN chose
     tls: i32 = -1,      // a TLS connection's slot in the TlsServer (http.tls); -1 for none
     deadline: i64,      // the time after which the sweep closes it
     x: Exchange<S>,     // the request in progress past its handler's REQUEST call
@@ -64,6 +65,7 @@ struct NoTls {}
 fn tls_serves(t: NoTls&) -> bool { false }
 fn tls_open(t: NoTls&) -> i32 { -1 }
 fn tls_ready(t: NoTls&, k: i32) -> bool { false }
+fn tls_h2(t: NoTls&, k: i32) -> bool { false }
 fn tls_recv(t: NoTls&, k: i32, fd: i32, buf: u8[:]) -> i64, bool { return -1, false; }
 fn tls_take(t: NoTls&, k: i32, bytes: const u8[:], out: u8[>..]&) -> bool { false }
 fn tls_seal(t: NoTls&, k: i32, w: u8[>..]&, from: i64, last: bool) -> bool { false }
@@ -87,7 +89,7 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
     for k in cfg.listeners.len + 1 {
         let h2c = if k == 0 { cfg.h2c } else { cfg.listeners[k - 1].h2c };
         let secure = if k == 0 { cfg.tls } else { cfg.listeners[k - 1].tls };
-        // h2 over TLS, chosen by ALPN, is still to come.
+        // h2c is h2 by prior knowledge, over TCP; over TLS, ALPN chooses it.
         guard !secure || !h2c && tls_serves(tls) else { return Error { call: "tls", code: EINVAL }; }
         h2c_at.push(h2c);
         tls_at.push(secure);
@@ -431,6 +433,16 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
                 got += r;
                 rlen += r;
                 drained = empty && !hup;
+                // The first plaintext: if ALPN chose h2, the preface goes to
+                // the h2 driver, never to answer, in the turn go lists the
+                // connection for.
+                if c.h2 == -1 {
+                    if tls_h2(tls, c.tls) {
+                        c.ready = true;
+                        return wait(c, progress);
+                    }
+                    c.h2 = -2;
+                }
                 continue;
             }
             let r = if c.state == DRAINING { net_recv(c.fd, rbuf) }
@@ -557,6 +569,11 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
         if c.ready && !c.listed {
             c.listed = true;
             turns.push(i as u64);
+            // advance stopped at an h2 preface (ALPN): the connection's h2
+            // state, here, off the request path, before any event drives it.
+            if c.h2 == -1 && c.tls >= 0 && tls_h2(tls, c.tls) {
+                c.h2 = h2conns.alloc_index(h2_conn(cfg, now)) as i32;
+            }
         }
     }
 

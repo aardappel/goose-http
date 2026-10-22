@@ -1,5 +1,5 @@
-// HTTP/1.1 over TLS in serve_epoll and serve, with goose-tls's server TLS
-// 1.3, written in Goose over OpenSSL 3's libcrypto (task 014). Only a
+// HTTP/1.1 and h2 over TLS in serve_epoll and serve, with goose-tls's server
+// TLS 1.3, written in Goose over OpenSSL 3's libcrypto (task 014). Only a
 // program that imports this module needs that package, which its root file
 // declares at the tag this file names:
 //
@@ -8,9 +8,11 @@
 //   import http.tls;
 //
 // The listeners with Listener.tls (or Config.tls for Config.port's) serve
-// TLS, from a context the program makes once and hands each worker:
+// TLS, from a context the program makes once and hands each worker. Its
+// ALPN protocols choose each connection's driver: h2 where the context lists
+// "h2" and the client chose it, HTTP/1.1 otherwise.
 //
-//   let ctx, ok = tls::server_files("server.crt", "server.key", ["http/1.1"]);
+//   let ctx, ok = tls::server_files("server.crt", "server.key", ["h2", "http/1.1"]);
 //   http::run(cfg, ctx, worker);
 //   tls::free(ctx);
 //
@@ -97,6 +99,11 @@ fn tls_open(t: TlsServer&) -> i32 {
 }
 
 fn tls_ready(t: TlsServer&, k: i32) -> bool { t.slots[k].ready }
+
+// Whether slot k's client chose h2 by ALPN, once its handshake is done: the
+// context lists "h2" (tls::server's protocols), and the client offered it.
+// The loops ask once a connection, and keep the answer.
+fn tls_h2(t: TlsServer&, k: i32) -> bool { tls::alpn(t.slots[k].conn) == "h2" }
 
 // Reads plaintext into buf from what slot k holds, through its handshake
 // first, until buf is full or OpenSSL wants more input. Returns the count,

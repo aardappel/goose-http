@@ -43,7 +43,8 @@ struct RingConn<S> {
     queued: i64,        // bytes given to ring_send and not yet sent
     reading: bool,      // its multishot receive is queued
     stalled: bool,      // stopped reading at cfg.max_queued, with held to answer
-    h2: i32 = -1,       // an h2c connection's H2Conn, in the worker's pool; -1 for HTTP/1.1
+    h2: i32 = -1,       // an h2 connection's H2Conn, in the worker's pool; -1 for HTTP/1.1,
+                        // and -2 for HTTP/1.1 that a TLS handshake's ALPN chose
     deadline: i64,      // the time after which the sweep closes it
     x: Exchange<S>,     // the request in progress past its handler's REQUEST call
     held: u8[:],        // received and not yet answered
@@ -85,7 +86,7 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
         let secure = if k == 0 { cfg.tls } else { cfg.listeners[k - 1].tls };
         // Windows, which has no sendfile, serves no TLS so far.
         guard !secure || net_sendfile(-1, -1, 0, 0) != -ENOSYS else { return Error { call: "tls", code: ENOSYS }; }
-        // h2 over TLS, chosen by ALPN, is still to come.
+        // h2c is h2 by prior knowledge, over TCP; over TLS, ALPN chooses it.
         guard !secure || !h2c && tls_serves(tls) else { return Error { call: "tls", code: EINVAL }; }
         h2c_at.push(h2c);
         tls_at.push(secure);
@@ -541,7 +542,14 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
             ring_give(r, cq.buf);
             plain.clear();
             let going = tls_take(tls, c.tls, wire, plain);
-            if plain.len > 0 { take(c, -1, plain, plain.len); }
+            if plain.len > 0 {
+                // The first plaintext: if ALPN chose h2, feed gives its
+                // preface to pump_h2.
+                if c.h2 == -1 {
+                    c.h2 = if tls_h2(tls, c.tls) { h2conns.alloc_index(h2_conn(cfg, now)) as i32 } else { -2 };
+                }
+                take(c, -1, plain, plain.len);
+            }
             if !going && c.state == OPEN { notify(c); } else { flush(c); }
         } else if cq.res > 0 {
             take(c, cq.buf, "", cq.res as i64);
