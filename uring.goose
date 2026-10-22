@@ -293,8 +293,9 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
         c.deadline = now + cfg.linger_ms;
     }
 
-    // Closes an OPEN TLS connection as a refusal does, which sends
-    // close_notify once its handshake is done, or a failed handshake's alert.
+    // Closes an OPEN connection as a refusal does, after what wbuf holds:
+    // over TLS, close_notify follows once its handshake is done, or a failed
+    // handshake's alert.
     fn notify(c: RingConn<S>&) {
         c.state = CLOSING;
         c.deadline = now + cfg.linger_ms;
@@ -606,9 +607,19 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
             let c .= conns[i];
             if c.fd < 0 || c.deadline > now || c.x.stream.waiting { continue; }
             if c.h2 >= 0 {
+                let h .= h2conns[c.h2];
                 var waits = false;
-                for k in h2conns[c.h2].streams { waits = waits || h2streams[k].x.stream.waiting; }
-                if !waits { close_conn(i); }
+                for k in h.streams { waits = waits || h2streams[k].x.stream.waiting; }
+                if waits { continue; }
+                // An idle one is sent GOAWAY (RFC 9113 §9.1).
+                if c.state == OPEN && h.streams.len == 0 && c.queued == 0 {
+                    wbuf.clear();
+                    h2_write_goaway(wbuf, h.last_stream, H2_NO_ERROR);
+                    h.goaway = true;
+                    notify(c);
+                    continue;
+                }
+                close_conn(i);
                 continue;
             }
             // A handshake that didn't finish in time gets no 408.

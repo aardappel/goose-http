@@ -474,31 +474,46 @@ fn epoll_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
             let c .= conns[i];
             if c.fd < 0 || c.deadline > now || c.x.stream.waiting { continue; }
             if c.h2 >= 0 {
+                let h .= h2conns[c.h2];
                 var waits = false;
-                for k in h2conns[c.h2].streams { waits = waits || h2streams[k].x.stream.waiting; }
-                if !waits { close_conn(i); }
+                for k in h.streams { waits = waits || h2streams[k].x.stream.waiting; }
+                if waits { continue; }
+                // An idle one is sent GOAWAY (RFC 9113 §9.1).
+                if c.state == OPEN && h.streams.len == 0 && c.out.len == 0 {
+                    wbuf.clear();
+                    h2_write_goaway(wbuf, h.last_stream, H2_NO_ERROR);
+                    h.goaway = true;
+                    if bye(c) { continue; }
+                }
+                close_conn(i);
                 continue;
             }
             // A handshake that didn't finish in time gets no 408.
             if owes_408(c, c.out.len > 0 || c.x.stream.file >= 0) && (c.tls < 0 || tls_ready(tls, c.tls)) {
                 wbuf.clear();
                 refuse(wbuf, 408, common);
-                if c.tls >= 0 && !tls_seal(tls, c.tls, wbuf, 0, true) { wbuf.clear(); }
-                let sent = wbuf.len > 0 && net_send(c.fd, wbuf) == wbuf.len;
-                wbuf.clear();
-                if sent {
-                    if c.held.len > 0 {
-                        spill.free_slice(c.held);
-                        c.held = c.held[..0];
-                    }
-                    net_shutdown(c.fd, SHUT_WR);
-                    c.state = DRAINING;
-                    c.deadline = now + cfg.linger_ms;
-                    continue;
-                }
+                if bye(c) { continue; }
             }
             close_conn(i);
         }
+    }
+
+    // Sends wbuf, a refusal or a GOAWAY, in one send, with close_notify after
+    // it over TLS, then shuts the connection down and gives the client
+    // cfg.linger_ms to close. False when the socket didn't take it all.
+    fn bye(c: EpollConn<S>&) -> bool {
+        if c.tls >= 0 && !tls_seal(tls, c.tls, wbuf, 0, true) { wbuf.clear(); }
+        let sent = wbuf.len > 0 && net_send(c.fd, wbuf) == wbuf.len;
+        wbuf.clear();
+        guard sent else { return false; }
+        if c.held.len > 0 {
+            spill.free_slice(c.held);
+            c.held = c.held[..0];
+        }
+        net_shutdown(c.fd, SHUT_WR);
+        c.state = DRAINING;
+        c.deadline = now + cfg.linger_ms;
+        return true;
     }
 
     // Whether the last wait returned events. Under load the next ones are
