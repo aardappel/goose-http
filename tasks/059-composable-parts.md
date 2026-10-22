@@ -27,7 +27,7 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
    framework's handler holds the bytes in a context of its own. Change:
    `ws_take(bytes, ws, out)`, beside `ws_release` for `CLOSED`; `ws_read` calls one or
    the other. Done.
-3. [ ] **`body_within(taken, ev, out, limit)` writes its own 413**, and takes an
+3. [x] **`body_within(taken, ev, out, limit)` writes its own 413**, and takes an
    `Event` for its kind, data, and the request's length. Change: the verdict
    `body_over(req, taken, limit) -> bool`, `taken > limit || !req.chunked &&
    req.body > limit`, which gives `body_within`'s answer at `REQUEST`, whole or not,
@@ -37,10 +37,9 @@ it. None may add instructions to a request ([task 027](027-idiomatic-api.md)).
    and `examples/upload/`, where it stayed a call, so the upload routes' C changes,
    and only a count on Linux could say what that costs. A `body_over` beside an
    unchanged `body_within` would leave the generated code as it is, but would repeat
-   the comparison rather than compose it. For the maintainer: either, after
-   `bench/count.sh` on the upload tier, or neither, since the verdict is one
-   comparison of numbers a framework holds, as goose-rest's `arrived` already makes
-   it.
+   the comparison rather than compose it. Decided (2026-10-22): neither. The verdict
+   is one comparison of numbers a framework holds, as goose-rest's `arrived` already
+   makes it, too small to be a part.
 4. [ ] **`gather(ev, g, out, limit)` and its pool.** It takes an `Event`, writes 413
    and 500 itself, and fills the worker's pool `gathered` through `gather_head`,
    `gather_piece`, and `release_gather`, which `docs/api.md` doesn't list. goose-rest
