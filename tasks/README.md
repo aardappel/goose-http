@@ -70,7 +70,7 @@ goose-rest's first benchmark run on the desktop. The HTTP changes it needs are o
 | 048: packages spawn threads | On `main` on a pinned Goose commit; the README's quick start waits for a release. |
 | 053: outbound connections | goose-postgres and the ACME package's HTTPS requests wait on it (goose-rest's task 047). |
 | 054: WebSocket | Built and tested, Autobahn included; HttpArena's echo-ws benchmark runs remain. |
-| 059: composable parts | The API audited against the rule that every convenience is a composition of public parts; WebSocket's parts on the branch `composable`; the gather pool's design and the other items await the maintainer. |
+| 059: composable parts | The API audited against the rule that every convenience is a composition of public parts; WebSocket's parts, `unrouted`, and the gather pool's budget are on `main`, measured on Linux. `unrouted`'s 404 count on Linux, and items 8, 13, and 14, remain. |
 | 060: exchange state | goose-rest's `Exchange.mode` audited against goose-http's stream: `NO_ROOM` replaces goose-rest's clock check, and `PENDING` can read `Event.whole`; four decisions await the maintainer. |
 
 Tasks 013 and 018 have completed acceptance criteria and are archived with the other

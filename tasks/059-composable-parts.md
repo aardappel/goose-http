@@ -1,6 +1,6 @@
 # 059: Composable parts
 
-Status: in-progress (asked for 2026-10-22); item 4 on the branch `gather-pool`.
+Status: in-progress (asked for 2026-10-22); items 5, 8, 13, and 14 open.
 
 Every convenience is a composition of public parts
 ([decision](../docs/decisions.md#every-convenience-is-a-composition-of-public-parts)):
@@ -284,6 +284,25 @@ Checked on macOS, at Goose v2026.3:
   valgrind over 100,000 plaintext requests, a request costs 1,543.9 instructions
   before and after. Written in `handle` rather than in `upgrade_ws`, the upgrade's new
   call cost 12 more.
+
+Measured on Linux, on Enkidu (AMD Ryzen 7 PRO 6850U, WSL2 Ubuntu-26.04), Goose v2026.3
+and gcc 15.2.0, `e73b9870` before and `b5f82a2d` after:
+
+- Instructions per request are unchanged: `/plaintext` 1,894.7 on epoll, and 1,930.5
+  and 1,930.6 on io_uring; tier A's `/api/items/1` 4,149.5 on epoll and 4,185.9 on
+  io_uring.
+- `.text` is 1,984 bytes smaller on the plaintext server and 256 on the REST tier
+  server.
+- Tier D's uploads per second, the median of 3 rounds of 5 s, before and after, all
+  within the rounds' range:
+
+  | Loop | Alone | Beside forms |
+  |---|---:|---:|
+  | io_uring | 643.7 → 651.4 | 99.5 → 103.6 |
+  | epoll | 677.7 → 671.0 | 78.7 → 79.1 |
+
+- Peak RSS is unchanged: 69-71 MB alone, 125-129 MB beside forms.
+- perf profiles of uploads alone match, with no allocation function above 0.8%.
 
 ## Acceptance criteria
 
