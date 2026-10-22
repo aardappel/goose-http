@@ -210,6 +210,29 @@ itself. That is 0.13% and 0.23% of a request over TLS. On the `v0.0.3` pin, with
 libssl's server, HTTP/1.1 over TLS cost 28,823 on epoll and 27,850 on io_uring by the
 same method; goose-tls's own server takes 44% and 39% fewer.
 
+### On Linux (2026-10-22)
+
+Tiamat (Ryzen 7 5800X3D, WSL2 Ubuntu 26.04.1, kernel 6.18.54.1, gcc 15.2, Goose
+v2026.3, perf 6.18, h2load 1.68.0), `main` at `2127390f` (goose-tls `v0.0.4`) against
+v0.5.0 (`e128cb39`, goose-tls `v0.0.3`, libssl's server). `scripts/test.sh` passed on
+every loop, with h2spec 146/146 over h2c and TLS on each. `bench/count.sh` at
+N=1,000,000; the TLS rows by its perf and h2load command (`-c 256 -m 16 -t 8`), so
+they weigh the swap of server along with this task's change:
+
+| Row | Loop | v0.5.0 | `2127390f` | Change |
+|---|---|---:|---:|---:|
+| `/plaintext` | io_uring | 1,930.8 | 1,923.7 | -7.1 |
+| `/api/me` | io_uring | 3,667.9 | 3,667.9 | 0 |
+| HTTP/1.1 over TLS, `/json` | epoll | 6,078.6 | 5,146.2 | -15.3% |
+| HTTP/1.1 over TLS, `/json` | io_uring | 6,862.0 | 6,041.1 | -12.0% |
+| h2 over TLS, `/json` | epoll | | 11,111.0 | |
+
+The benchmark server's idle `VmRSS` with TLS and 4 workers, median of three, fell from
+10,696 to 10,224 kB on epoll and from 12,744 to 12,040 kB on io_uring. HttpArena's
+validation at `3717e256` passed static-h2: the certificate, TLS 1.3, ALPN h2, content
+types, size, and 404. The report of that run lost the epoll plaintext rows, h2 on
+io_uring, and json-tls's and baseline-h2's validation.
+
 ## Acceptance criteria
 
 - [x] A TLS listener whose context lists `h2` serves h2 to a client that selects it by
