@@ -2,7 +2,11 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
-## Unreleased
+## v0.5.1 (2026-10-22)
+
+h2 over TLS, goose-tls's own TLS 1.3 server, and outbound sockets released when an h2
+stream ends. Goose `v2026.3`, goose-hash `v0.0.4`, goose-tls `v0.0.4`, and
+goose-compress `v0.1.1`.
 
 Added:
 

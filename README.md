@@ -37,7 +37,7 @@ generation from OpenAPI, see [goose-rest](https://github.com/kaitk/goose-rest).
 
 ## What it provides
 
-The latest tag, `v0.5.0`, provides all of this on every platform above:
+The latest tag, `v0.5.1`, provides all of this on every platform above:
 
 - A strict parser that guards against request smuggling and returns 414, 431, 501, and
   505 where appropriate; header fields, path, query, and percent-decoding support.
@@ -70,7 +70,7 @@ a program also needs a C compiler and, on Linux, liburing:
 Save this as `hello.goose`:
 
 ```rust
-import http from "github.com/kaitk/goose-http@v0.5.0";
+import http from "github.com/kaitk/goose-http@v0.5.1";
 
 thread_fn worker(cfg: http::Config) {
     let e = http::serve(cfg) { req, body, out =>
