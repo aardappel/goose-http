@@ -903,20 +903,27 @@ ACME client from a browser on port 443; and making `TlsServer` itself generic, w
 would make every program that names it, such as goose-rest's `rest.tls`, write a type
 parameter.
 
-## Not yet decided
+## Upgraded streams can request output drain notifications
 
-### Upgraded streams can request output drain notifications
-
-Implemented 2026-10-22 for review. `after_drain` and `DRAINED` let a publisher
-keep one bounded batch in flight per upgraded connection. The pending bit is a
-`Framing` variant, so ordinary HTTP connections gain no fields or queue storage.
-Both loops deliver the event after their queued output reaches the socket;
-connection failure cancels it through the existing `CLOSED` event.
+Accepted 2026-10-23; task 063. `after_drain` and `DRAINED` let a publisher keep one
+bounded batch in flight per upgraded connection. The pending bit is a `Framing`
+variant, so ordinary HTTP connections gain no fields or queue storage. Both loops
+deliver the event after their queued output reaches the socket; connection failure
+cancels it through the existing `CLOSED` event. Plain HTTP costs +0.1 user
+instructions per request on the emulated ring and +0.3 on epoll (task 063).
 
 A general `try_send` admission API would need output accounting exposed to every
 handler, and retry storage in the application. A drain credit lets the publisher
 retain the next message instead. This is opt-in producer flow control, not a
 hard limit on handlers that continue sending without waiting for a credit.
+
+Rejected: `MORE` for upgraded connections, which every WebSocket handler would get
+after each message, a call each, and which closes a connection whose handler sends
+nothing there; and holding a slow subscriber's mail in the worker's box, with `FULL`
+for the publisher, which lets one subscriber fill the box for every other connection.
+Server-Sent Events already have their credit in `MORE`.
+
+## Not yet decided
 
 ### Compression in an optional module
 

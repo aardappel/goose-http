@@ -257,6 +257,10 @@ the bounded queue is full; one stalled subscriber can then delay the publisher.
 `CLOSED` releases that subscriber's state. A drain credit confirms socket acceptance,
 not processing by the peer. See `examples/drain.goose` for one publisher and reader.
 
+Server-Sent Events need no `after_drain`: a handler that sends at `WAKE` without
+calling `later` again gets `MORE` once the client has room, and gives the publisher its
+credit there.
+
 ## Limits
 
 Every resource a worker holds is bounded by a `Config` field, and past each bound the

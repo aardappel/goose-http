@@ -287,6 +287,7 @@ thread_fn worker(cfg: http::Config) {
 | `CLOSED` | The connection closed while the handler was owed a call. Release what `st` holds. |
 | `WAKE` | A message came to the address `later` returned: its bytes in `ev.data`, its tag in `ev.tag`. ([Answers that wait](#answers-that-wait)) |
 | `TIMEOUT` | `later`'s time limit passed first, or there was no room to wait, which `ev.tag == http::NO_ROOM` says. |
+| `DRAINED` | An upgraded connection's output that `after_drain` asked about has reached the socket. ([WebSocket](#websocket)) |
 | `DONE` | With `Config.log`, the response is whole: `ev.status`, `ev.sent` bytes, and `ev.ms` from the head's first byte, for an access log. `ev.req` is the request only when it was answered at `REQUEST`. |
 
 - `http::begin(out, status, length)` opens a response: `Content-Length`, or chunked
@@ -390,23 +391,16 @@ thread_fn worker(cfg: http::Config) {
   head, before its payload arrives.
 - `http::ws_send(out, op, data)` sends a message in one frame, at any event of the
   connection's, such as `WAKE` for one from another thread. Text must be UTF-8.
-- `http::after_drain(out)` requests one `DRAINED` event after an upgraded
-  connection's output queue empties into its socket. Call it after `send` or
-  `ws_send`, and accept the next bounded batch only at `DRAINED`. It returns false
-  without an open upgraded stream or bytes sent since the previous request.
-  A second request without intervening sends returns false and leaves the first
-  notification pending. Sends followed by another successful request still owe
-  only one notification. `CLOSED` replaces it if the connection fails. A pending
-  `later` mailbox wait and its deadline stay armed. Sending the next bounded batch
-  from `DRAINED` is supported; the readiness loop gives at most one drain credit
-  per connection turn before serving other connections and timers.
-  Socket acceptance does not mean the peer processed the bytes. This API does not
-  limit arbitrary calls to `ws_send`: the program must bound its batches and
-  producer queues. See `examples/drain.goose` for a mailbox publisher that sends
-  one 8 KiB batch per drain credit. `sh scripts/test-drain.sh`, also run by
-  `scripts/test.sh` on Unix, checks fair turns and timeout refresh on both loops.
-  On Linux it also checks a stalled reader's memory, resumed frame ordering,
-  and disconnect cleanup.
+- `http::after_drain(out)`, after `send` or `ws_send` on an upgraded connection, asks
+  for one `DRAINED` once that output has reached the socket, not the peer. A publisher
+  sends its next bounded batch there, which may call `after_drain` again; a slow
+  client then holds one batch, not a growing queue. It returns false with nothing
+  sent since the last request, which stays pending, or without an open upgraded
+  stream. A `later` wait stays armed meanwhile, and a connection that fails gets
+  `CLOSED` instead. Sends that don't wait for `DRAINED` aren't limited: the program
+  bounds its own batches and queues
+  ([broadcasts](patterns.md#broadcasts-to-upgraded-connections)).
+  `examples/drain.goose` sends one 8 KiB batch per `DRAINED`.
 - `http::ws_close(out, st.ws, code, reason)` starts the close: 1000 and no reason by
   default. Messages that arrive after are dropped, and the connection closes when the
   client's Close comes, or after `Config.idle_ms`.
