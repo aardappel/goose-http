@@ -53,9 +53,11 @@ extern "ur_send" fn ring_send(r: i64, fd: i32, tag: u64, data: const u8[:]) -> i
 // when this fails. A file that ends early fails the send with EIO.
 extern "ur_send_file" fn ring_send_file(r: i64, fd: i32, tag: u64, file: i64, off: i64, len: i64) -> i32;
 extern "ur_cancel" fn ring_cancel(r: i64, tag: u64);
-// Cancels every request on fd, then closes it. Sends not yet started are
+// Cancels every request on fd, then closes it. recv is the tag of fd's
+// receive while one is queued, until its completion without more, and 0
+// otherwise: io_uring cancels the receive by it. Sends not yet started are
 // dropped, with no completion.
-extern "ur_close" fn ring_close(r: i64, fd: i32);
+extern "ur_close" fn ring_close(r: i64, fd: i32, recv: u64);
 // Writes dst.len bytes of provided buffer buf, from off, into dst.
 extern "ur_take" fn ring_take(r: i64, buf: i32, off: i64, dst: u8[:]);
 extern "ur_give" fn ring_give(r: i64, buf: i32);

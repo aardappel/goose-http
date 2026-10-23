@@ -11,6 +11,18 @@ Added:
 - `fuzz/`: libFuzzer targets for the request head and chunked body, HPACK, h2 frames,
   and multipart ([development](docs/development.md#fuzz-the-parsers)).
 
+Changed:
+
+- On io_uring, closing a connection cancels its receive and its send in flight by
+  their tags, and only when they're queued, rather than everything on its fd, which
+  the kernel finds by walking its whole poll table
+  ([decisions](docs/decisions.md#io_uring-cancels-a-closing-connections-requests-by-their-tags)).
+
+Fixed:
+
+- On io_uring, a file's send closed while it filled its pipe no longer leaves the
+  pipe, with that piece in it, for the next file's send.
+
 ## v0.5.5 (2026-10-23)
 
 Drain credits for publishers on upgraded connections. Goose `v2026.3`, goose-hash

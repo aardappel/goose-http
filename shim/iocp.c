@@ -564,8 +564,9 @@ void ur_cancel(int64_t h, uint64_t tag) {
 
 /* Closes fd, which ends every request on it with an error. Their
    completions still come, and are reported with their tags. The sends
-   waiting behind the one posted are dropped, with no completion. */
-void ur_close(int64_t h, int32_t fd) {
+   waiting behind the one posted are dropped, with no completion. recv
+   isn't needed: closing the socket ends its receive. */
+void ur_close(int64_t h, int32_t fd, uint64_t recv) {
     struct ur *u = (struct ur *)(intptr_t)h;
     struct ur_sock *k = ur_map_get(&u->socks, (uint32_t)fd);
     closesocket((SOCKET)(intptr_t)fd);

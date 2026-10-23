@@ -422,8 +422,9 @@ void RP(cancel)(int64_t h, uint64_t tag) {
     }
 }
 
-/* Closes fd. Its sends not yet made are dropped, with no completion. */
-void RP(close)(int64_t h, int32_t fd) {
+/* Closes fd. Its sends not yet made are dropped, with no completion. Its
+   receive ends with it, so recv isn't needed. */
+void RP(close)(int64_t h, int32_t fd, uint64_t recv) {
     struct rp *u = (struct rp *)(intptr_t)h;
     if ((uint32_t)fd < u->nfds) {
         struct rp_fd *f = &u->fds[fd];

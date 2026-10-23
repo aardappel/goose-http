@@ -252,7 +252,7 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
             tls_close(tls, c.tls, c.fd, false);
             c.tls = -1;
         }
-        ring_close(r, c.fd);
+        ring_close(r, c.fd, if c.reading { c.tag } else { 0 });
         c.fd = -1;
         if c.x.stream.file >= 0 {
             net_file_close(c.x.stream.file);

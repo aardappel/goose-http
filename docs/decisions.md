@@ -923,6 +923,41 @@ nothing there; and holding a slow subscriber's mail in the worker's box, with `F
 for the publisher, which lets one subscriber fill the box for every other connection.
 Server-Sent Events already have their credit in `MORE`.
 
+## io_uring cancels a closing connection's requests by their tags
+
+Decided 2026-10-23. Replaces `ring_close`'s cancel of every request on the fd, which
+the io_uring loop has queued since it was added, unrecorded.
+
+A connection's socket can have two requests in the kernel when it closes: its
+multishot receive, while the loop's `reading` says one is queued, and the one send in
+flight, whose record the shim keeps as its fd's first. Its other requests, a TLS
+connection's and an upgraded one's included, are sends queued behind that one, which
+the shim drops. Sockets that `wait_socket` armed are other fds, which
+`ring_disarm` cancels ([io_uring cancels a socket's poll when its wait
+ends](#io_uring-cancels-a-sockets-poll-when-its-wait-ends)). `ring_close` now takes the
+receive's tag, or 0 for none, and cancels the receive by it and the send by its
+record's address, then closes the socket.
+
+The cancels are still needed: a queued request holds the socket, so a connection the
+server closes, with its receive armed or a send that its client doesn't take, would
+otherwise stay open, and its client would never see the close (`http_client.py`'s
+`slow`). Stale completions don't need them: the tag's generation and the fd's
+generation in the shim already drop those.
+
+The kernel serves a cancel by fd by walking every bucket of the ring's poll table,
+where a cancel by user_data looks in one. On a Linux laptop under HttpArena's
+limited-conn profile, 10 requests per connection over 4,096 connections, that walk was
+9.9% of a server's samples. There the client closes first, so its receive has usually
+ended and the server queues no cancel at all.
+
+The close is no longer hard-linked behind the cancel: a cancel by fd needed the fd
+open, and one by user_data doesn't. A file's send cancelled in its splice into its pipe
+closes the pipe rather than keep it, since the pipe may hold the piece.
+
+Rejected: a cancel by tag of the receive alone, which leaves a send to a client that
+doesn't read holding the socket open; and the shim tracking whether each fd's receive
+is queued, which needs the fd on the completion path, where the loop already knows.
+
 ## Not yet decided
 
 ### Compression in an optional module

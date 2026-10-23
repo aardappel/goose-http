@@ -132,7 +132,10 @@ A connection has one send in flight, and later sends queue behind it, which keep
 order and batches pipelined responses. Past `Config.max_queued` bytes queued, the loop
 stops receiving until the client reads. A completion carries the connection's slot
 and generation, and the shim tracks each fd's generation, so a send left from a closed
-connection never goes to a new one that reuses the fd.
+connection never goes to a new one that reuses the fd. A close cancels the
+connection's receive, while one is queued, and its send in flight, each by its tag,
+which the kernel finds by hash
+([decisions](decisions.md#io_uring-cancels-a-closing-connections-requests-by-their-tags)).
 
 Where io_uring isn't available, such as under Docker's default seccomp profile, with
 io_uring disabled, or on an older kernel, the ring falls back to the emulation in

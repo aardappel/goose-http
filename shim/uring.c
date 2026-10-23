@@ -172,7 +172,7 @@ void urp_recv(int64_t h, int32_t fd, uint64_t tag);
 int32_t urp_send(int64_t h, int32_t fd, uint64_t tag, ur_bytes data);
 int32_t urp_send_file(int64_t h, int32_t fd, uint64_t tag, int64_t file, int64_t off, int64_t len);
 void urp_cancel(int64_t h, uint64_t tag);
-void urp_close(int64_t h, int32_t fd);
+void urp_close(int64_t h, int32_t fd, uint64_t recv);
 void urp_take(int64_t h, int32_t buf, int64_t off, ur_bytes dst);
 void urp_give(int64_t h, int32_t buf);
 int32_t urp_wait(int64_t h, ur_completions out, int32_t timeout_ms);
@@ -551,16 +551,20 @@ void ur_cancel(int64_t h, uint64_t tag) {
     sqe->flags |= IOSQE_CQE_SKIP_SUCCESS;
 }
 
-/* Queues a cancel of every request on fd, then its close. A queued request
+/* Queues a cancel of the receive queued on fd with tag recv, unless recv is
+   0, and of the send in flight on fd, then fd's close. A queued request
    holds a reference to the socket, so closing fd alone would leave the
-   connection open until its receive ended. The sends waiting behind the one
+   connection open until the request ended. The sends waiting behind the one
    in flight are dropped, with no completion. */
-void ur_close(int64_t h, int32_t fd) {
+void ur_close(int64_t h, int32_t fd, uint64_t recv) {
     if (UR_EMULATED(h)) {
-        urp_close(UR_POLL(h), fd);
+        urp_close(UR_POLL(h), fd, recv);
         return;
     }
     struct ur *u = (struct ur *)(intptr_t)h;
+    /* By user_data, which the kernel finds by hash, and only what's there: a
+       cancel by fd walks every bucket of the ring's poll table. */
+    if (recv) ur_cancel(h, recv);
     if ((uint32_t)fd < u->nfds) {
         struct ur_fd *f = &u->fds[fd];
         if (f->head) {
@@ -570,21 +574,17 @@ void ur_close(int64_t h, int32_t fd) {
                 ur_send_free(u, s);
             }
             f->head->next = NULL;
+            /* A splice may be filling its pipe: not empty, so not reused. */
+            if (f->head->file >= 0) f->head->piped = 1;
+            struct io_uring_sqe *sqe = ur_sqe(u);
+            io_uring_prep_cancel64(sqe, (uint64_t)(uintptr_t)f->head | UR_SEND, 0);
+            io_uring_sqe_set_data64(sqe, UR_QUIET);
+            sqe->flags |= IOSQE_CQE_SKIP_SUCCESS;
         }
         f->head = f->last = NULL;
         f->gen++;
     }
     struct io_uring_sqe *sqe = ur_sqe(u);
-    io_uring_prep_cancel_fd(sqe, fd, IORING_ASYNC_CANCEL_ALL);
-    io_uring_sqe_set_data64(sqe, UR_QUIET);
-    sqe->flags |= IOSQE_IO_HARDLINK | IOSQE_CQE_SKIP_SUCCESS;
-    sqe = io_uring_get_sqe(&u->ring);
-    if (!sqe) {
-        /* The link can't span a submit; close fd after what's queued. */
-        io_uring_submit(&u->ring);
-        close(fd);
-        return;
-    }
     io_uring_prep_close(sqe, fd);
     io_uring_sqe_set_data64(sqe, UR_QUIET);
     sqe->flags |= IOSQE_CQE_SKIP_SUCCESS;
