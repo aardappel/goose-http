@@ -238,13 +238,13 @@ class Tests:
 def find_tests(names):
     """test/<area>/*.goose, or those of them whose area or name is in `names`."""
     tests = sorted(p for p in HERE.glob("*/*.goose") if p.parent != EXPECTED)
-    # test/tls/'s programs import goose-tls, which builds with OpenSSL, not yet
-    # set up on Windows (docs/development.md, "OpenSSL"). test/outbound/'s
-    # don't pass on Windows: the loop's listens on a Unix socket and serves on
-    # serve_epoll, which Windows lacks, and the blocking one's send after the
-    # peer closed fails with ECONNABORTED (docs/known-issues.md, "Windows").
+    # test/tls/'s programs and client/client build goose-tls, which builds with
+    # OpenSSL, not yet set up on Windows (docs/development.md, "OpenSSL").
+    # outbound_loop, timeout_tag, and client/client listen on Unix sockets and
+    # serve on serve_epoll, which Windows lacks.
     if WINDOWS:
-        tests = [t for t in tests if t.parent.name not in ("tls", "outbound")]
+        skip = {"outbound_loop", "timeout_tag", "client"}
+        tests = [t for t in tests if t.parent.name != "tls" and t.stem not in skip]
     stems = {}
     for t in tests:
         if t.stem in stems:

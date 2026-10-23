@@ -111,7 +111,8 @@ fn main() {
     print("large: ", got, " bytes counted, then ", end);
     http::hangup(s);
 
-    // A server that closes: recv gives 0, and a send then fails.
+    // A server that closes: recv gives 0, and a send then fails, with
+    // ECONNABORTED on Windows.
     s, e = http::connect("[::ffff:127.0.0.1]", port, 5000);
     assert(e.code == 0);
     assert(http::send_all(s, "x", 5000).code == 0);
@@ -121,7 +122,8 @@ fn main() {
         failed = http::send_all(s, large[..65536], 5000);
         if failed.code != 0 { break; }
     }
-    print("send after the close: ", failed.code == http::EPIPE || failed.code == http::ECONNRESET);
+    print("send after the close: ", failed.code == http::EPIPE || failed.code == http::ECONNRESET ||
+          failed.code == http::ECONNABORTED);
     http::hangup(s);
 
     // A port nothing listens on.
