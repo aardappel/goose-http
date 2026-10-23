@@ -73,6 +73,7 @@ goose-rest's first benchmark run on the desktop. The HTTP changes it needs are o
 | 061: h2 over TLS | Serves from both loops, chosen by ALPN; HttpArena's baseline-h2 waits for goose-tls's own server, and static-h2 is deferred. |
 | 062: io_uring's request cost | Since TLS on io_uring, plaintext `/api/me` costs +22 instructions there; explain it and remove it, or record why it stays. |
 | 063: upgraded drain credits | Unix integration and request-cost checks; native io_uring, macOS, and Windows validation remain before release. |
+| 064: latency-1m's tail | On the Mac, the tail is zrk out of CPU, for tokio too; the laptop's zrk CPU and a `THREADS=8` rerun remain. |
 
 Tasks 013 and 018 have completed acceptance criteria and are archived with the other
 completed work. Compression subtasks stay with their open parent. Completed platform

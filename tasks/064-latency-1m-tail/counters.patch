@@ -1,0 +1,64 @@
+--- a/shim/uring.c	2026-10-23 12:27:15
++++ b/shim/uring.c	2026-10-23 12:27:15
+@@ -718,8 +718,53 @@
+ /* Submits what's queued, waits up to timeout_ms (-1: no limit) for at least
+    one completion, and writes up to out.len of them into out. Leaves any
+    others for the next call. */
++#include <stdio.h>
++#include <time.h>
++#include <sys/syscall.h>
++static _Thread_local struct {
++    int64_t last_ret, last_print, busy, waitt, maxbusy, maxwait;
++    long passes, cqes, recvs, nobufs, ended, sends, timeouts, full, maxn, zero, given, inline_w;
++} K;
++static int64_t k_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000000000LL + t.tv_nsec; }
++static void k_report(struct ur *u, int64_t now) {
++    if (!K.last_print) { K.last_print = now; return; }
++    if (now - K.last_print < 1000000000LL) return;
++    fprintf(stderr, "K tid=%ld t=%.1f passes=%ld cqes=%ld recvs=%ld nobufs=%ld ended=%ld sends=%ld tmo=%ld full=%ld maxn=%ld zero=%ld busy%%=%.0f maxbusy_us=%lld maxwait_us=%lld ovf=%u\n",
++            (long)syscall(SYS_gettid), now / 1e9, K.passes, K.cqes, K.recvs, K.nobufs, K.ended, K.sends, K.timeouts, K.full, K.maxn, K.zero,
++            100.0 * K.busy / (double)(K.busy + K.waitt + 1), (long long)(K.maxbusy / 1000), (long long)(K.maxwait / 1000),
++            u->ring.cq.koverflow ? *u->ring.cq.koverflow : 0);
++    int64_t lp = now;
++    memset(&K, 0, sizeof K);
++    K.last_print = lp;
++    K.last_ret = now;
++}
++static int32_t ur_wait_real(int64_t h, ur_completions out, int32_t timeout_ms);
+ int32_t ur_wait(int64_t h, ur_completions out, int32_t timeout_ms) {
+     if (UR_EMULATED(h)) return urp_wait(UR_POLL(h), out, timeout_ms);
++    struct ur *u = (struct ur *)(intptr_t)h;
++    int64_t t0 = k_ns();
++    if (K.last_ret) { int64_t b = t0 - K.last_ret; K.busy += b; if (b > K.maxbusy) K.maxbusy = b; }
++    int32_t n = ur_wait_real(h, out, timeout_ms);
++    int64_t t1 = k_ns();
++    int64_t w = t1 - t0; K.waitt += w; if (w > K.maxwait) K.maxwait = w;
++    K.passes++;
++    if (n > 0) {
++        K.cqes += n;
++        if (n > K.maxn) K.maxn = n;
++        if (n == out.len) K.full++;
++        for (int32_t i = 0; i < n; i++) {
++            ur_completion *c = &out.data[i];
++            if (c->send) { K.sends++; continue; }
++            if (c->res > 0 && c->buf >= 0) K.recvs++;
++            if (c->res == -ENOBUFS) K.nobufs++;
++            if (!c->more && c->tag != u->wtag) K.ended++;
++        }
++    } else if (n == 0) K.zero++;
++    K.last_ret = t1;
++    k_report(u, t1);
++    return n;
++}
++static int32_t ur_wait_real(int64_t h, ur_completions out, int32_t timeout_ms) {
+     struct ur *u = (struct ur *)(intptr_t)h;
+     if (u->given) {
+         io_uring_buf_ring_advance(u->br, u->given);
+@@ -735,6 +780,7 @@
+         struct __kernel_timespec ts = { timeout_ms / 1000, (long long)(timeout_ms % 1000) * 1000000 };
+         r = io_uring_submit_and_wait_timeout(&u->ring, &cqe, 1, &ts, NULL);
+     }
++    if (r == -ETIME) K.timeouts++;
+     if (r < 0 && r != -ETIME) return r;
+     int32_t n = u->nsent < out.len ? u->nsent : (int32_t)out.len;
+     memcpy(out.data, u->sent, (size_t)n * sizeof *u->sent);
