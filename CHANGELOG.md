@@ -2,7 +2,10 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
-## Unreleased
+## v0.5.5 (2026-10-23)
+
+Drain credits for publishers on upgraded connections. Goose `v2026.3`, goose-hash
+`v0.0.4`, goose-tls `v0.0.5`, and goose-compress `v0.1.1`.
 
 Added:
 
@@ -10,6 +13,11 @@ Added:
   reaches its socket, so a publisher can keep one bounded batch in flight. Pending
   mailbox waits stay armed; closing cancels the credit. The application still bounds
   its producer queue and batches ([API](docs/api.md#websocket)).
+
+Fixed:
+
+- On Windows, a `Config.backlog` below 200 stays as asked, rather than being raised
+  to 200.
 
 ## v0.5.4 (2026-10-22)
 
