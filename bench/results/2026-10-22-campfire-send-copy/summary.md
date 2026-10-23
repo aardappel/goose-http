@@ -1,5 +1,29 @@
 # Emulated-ring send-copy experiment
 
+## Review outcome, 2026-10-23
+
+The [upstream review](https://github.com/kaitk/goose-http/pull/3#issuecomment-6371183040)
+finds that inline sending costs 13-28% throughput on server-bound 21 KiB responses.
+Its double-copy control has no measurable cost. The review reproduces a gain only
+with a saturated client; the measurements below do not justify merging this path.
+The review's A/A builds also place the plaintext user-cycle difference within build
+variation. Future send experiments need two independent base builds, enough client
+capacity to saturate the server, and total server CPU per response.
+
+The branch is rebased onto `75f0362919dd7140bc672f4cbecfb69033c500fc`, including
+goose-compress v0.1.3 and the native inline-send allocation fix. Both fixture close
+calls pass the new receive tag argument. Sanitizers, all 60 package tests at `-O0`
+and `-O2`, and both Linux loops' drain tests pass after the rebase. These are
+correctness checks; the original performance samples below retain their old pins.
+
+On the local WSL2 5.15 kernel, a disposable probe fails with EPERM under Docker's
+default seccomp profile. With seccomp disabled for the probe, basic io_uring works,
+but goose-http's required setup flags return EINVAL. Native integration requires a
+kernel update as well as allowing `io_uring_setup`, `io_uring_enter`, and
+`io_uring_register` in the container profile. No native performance result is claimed.
+
+## Original measurements
+
 Measured on 2026-10-22 PDT (2026-10-23 UTC), AMD Ryzen 9 9950X3D,
 x86-64 Docker on WSL2 Linux 5.15.167.4, glibc 2.39. Native io_uring setup
 returns EINVAL in the package counter container; the measured loop is the

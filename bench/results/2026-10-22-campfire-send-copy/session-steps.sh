@@ -1,9 +1,10 @@
 #!/bin/sh
-# Reproduces the package-only check on Linux; keeps builds under build/.
+# Reproduces the historical package-only check, not the rebased candidate.
 set -eu
 root=$(git rev-parse --show-toplevel)
 scratch=$root/build/send-copy-bench
 mkdir -p "$scratch" "$root/build/bench"
+git fetch https://github.com/aardappel/goose-http.git a12328478b48efd9ea6adb2038e3f185fc130651
 git worktree add --detach "$scratch/before" df12a627c9f4df51465f1ac7c324c17e86dc78b3
 git worktree add --detach "$scratch/after" a12328478b48efd9ea6adb2038e3f185fc130651
 for variant in before after; do
