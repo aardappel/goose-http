@@ -2,6 +2,24 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
+## v0.5.7 (2026-10-23)
+
+An io_uring send fix, and goose-compress `v0.1.3`. Goose `v2026.3`, goose-hash
+`v0.0.4`, goose-tls `v0.0.5`, and goose-compress `v0.1.3`.
+
+Changed:
+
+- goose-compress `v0.1.3`, whose CRC-32 uses the CPU's carryless multiply (PCLMULQDQ
+  on x86-64, PMULL on arm64) in a C shim, and whose `load32` is inlined. Gzip and
+  deflate responses are faster, with the same bytes; in Plod's HttpArena entry,
+  json-comp serves 20% more requests a second.
+
+Fixed:
+
+- On io_uring, a send made at once, without the ring, reserves its completion before
+  any byte goes out. Out of memory, it once returned an error after sending every byte;
+  now it sends nothing.
+
 ## v0.5.6 (2026-10-23)
 
 Fuzz targets for the parsers, and io_uring closes cancel by tag. Goose `v2026.3`,
