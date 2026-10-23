@@ -344,6 +344,12 @@ thread_fn worker(cfg: http::Config) {
   `http::ws_upgrade(req, st.ws, out, protocol)` names a subprotocol in
   `Sec-WebSocket-Protocol`: one of those the client offered, which
   `http::field_of(req, "sec-websocket-protocol")` gives.
+- A WebSocket keeps its promise while it's open, idle or not, so a worker admits the
+  budget ÷ (`limit` + 131) of them: 1,021 at the defaults. A program with many idle
+  connections on few cores, such as one sending notifications, reaches that long before
+  memory runs short, and its clients get 503. It raises the budget with
+  `http::gather_budget(bytes)` in `main`, or lowers `limit` to the longest message it
+  takes: at 4 KiB a worker admits 15,876.
 - `ws_upgrade` is three parts, for a program that answers a refusal in its own shape.
   `http::ws_check(req, out.minor)` answers nothing and returns the status, `ws_upgrade`'s
   101, 426, 400, or 501; for 101, the request's `Sec-WebSocket-Key`; and otherwise the
