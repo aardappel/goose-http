@@ -24,10 +24,10 @@ history; a future send proposal must establish a server-bound benefit first.
 
 The all-size attempt reduces application CPU cost but loses 25.5% median throughput
 in pipelined plaintext. A 16 KiB floor restores user-cycle cost close to baseline,
-but its six-sample plaintext median remains 8.5% lower. This is a review candidate,
+but its six-sample plaintext median remains 8.5% lower. This was a review candidate,
 not a demonstrated win across workloads. The review then measures a 13-28% loss
 on server-bound 21 KiB responses; copying the base response twice has no measurable
 cost. Native io_uring requires Linux 6.1 or later and a container policy that permits
 its syscalls. See the
-[measurement record](../bench/results/2026-10-22-campfire-send-copy/summary.md) for
+[measurement record](../../bench/results/2026-10-22-campfire-send-copy/summary.md) for
 the machine, commands, compiler pins, individual samples and limitations.
