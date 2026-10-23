@@ -2,7 +2,10 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
-## Unreleased
+## v0.5.6 (2026-10-23)
+
+Fuzz targets for the parsers, and io_uring closes cancel by tag. Goose `v2026.3`,
+goose-hash `v0.0.4`, goose-tls `v0.0.5`, and goose-compress `v0.1.2`.
 
 Added:
 
@@ -17,6 +20,7 @@ Changed:
   their tags, and only when they're queued, rather than everything on its fd, which
   the kernel finds by walking its whole poll table
   ([decisions](docs/decisions.md#io_uring-cancels-a-closing-connections-requests-by-their-tags)).
+- goose-compress `v0.1.2`, whose DEFLATE, gzip, and CRC-32 are faster.
 
 Fixed:
 
