@@ -1,0 +1,12 @@
+abPOST /up?n=5&x=a%20b HTTP/1.1
+Host: example.com:8080
+Transfer-Encoding: chunked
+Connection: keep-alive
+
+5;ext=1
+hello
+6
+ world
+0
+Trailer: x
+

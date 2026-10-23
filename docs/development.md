@@ -26,6 +26,7 @@ server/        the benchmark server, importing the package from "../"
 examples/      small servers (examples/README.md); the API by topic is docs/api.md
 test/          the tests, a folder per area, their golden files (expected/), and the
                runner, run_tests.py (below)
+fuzz/          libFuzzer targets for the parsers of what a client sends, and their seeds
 bench/         competing servers, load scripts, recorded results
 scripts/       build, test, and Goose setup scripts
 docs/          the API, architecture, development setup, known issues, results, Goose findings
@@ -541,6 +542,37 @@ It needs `nc` (`netcat-openbsd`) and `python3`. Against each server it runs:
 `PORT` picks the port (default 29080). Keep it below 32768: the many-client runs leave
 thousands of client sockets in `TIME_WAIT` on ports in the kernel's ephemeral range,
 and a server port among them fails to bind with `EADDRINUSE`.
+
+### Fuzz the parsers
+
+`fuzz/build.sh` builds four libFuzzer targets with AddressSanitizer and
+UndefinedBehaviorSanitizer into `build/fuzz/`, from `fuzz/fuzz.goose`, whose comment
+says what each feeds and checks: the HTTP/1.1 request head and chunked body
+(`fuzz_request`), HPACK (`fuzz_hpack`), h2 frames (`fuzz_h2frame`), and
+multipart/form-data (`fuzz_multipart`). Where two paths read the same bytes, as a
+chunked body whole and in pieces, the target asserts they agree. The parsers call no
+shim function, so the targets link only the program's C.
+
+It needs a clang with libFuzzer: on Linux, the distribution's `clang`; on macOS,
+Homebrew's `llvm`, since Apple's clang has none:
+
+```sh
+CC=$(brew --prefix llvm)/bin/clang fuzz/build.sh
+mkdir -p build/fuzz/corpus-request
+build/fuzz/fuzz_request -max_total_time=600 build/fuzz/corpus-request fuzz/seeds/request
+```
+
+A crash, a sanitizer report, or a failed assert is a finding; libFuzzer writes the
+input to `crash-*` in the working directory, and running the target on that file alone
+repeats it.
+
+The first campaign, at `df12a627` on an M1 Pro with Homebrew's LLVM 22, ran each
+target for an hour from `fuzz/seeds/` (2026-10-23): 351 M executions of
+`fuzz_request`, 39 M of `fuzz_hpack`, 755 M of `fuzz_h2frame`, and 65 M of
+`fuzz_multipart`, with no finding. What isn't fuzzed: the loops' connection state, h2
+streams and flow control among it, which h2spec covers
+([Run every test](#run-every-test)), and WebSocket frames, which Autobahn's fuzzing
+client covers.
 
 ### Use the package from git
 
