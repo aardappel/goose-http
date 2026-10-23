@@ -185,14 +185,11 @@ scripts, and `CC` the C compiler, as for `goose build --cc`. In Git Bash, run it
 
 **OS:** tested only on Ubuntu 26.04.1 LTS so far (2026-10-10).
 
-Install the C compilers, liburing, and the test tools, then run `scripts/test.sh`. oha
-builds with cargo, from [rustup](https://rustup.rs), and lands in `~/.cargo/bin`:
+Install the C compilers, liburing, and the test tools, then run `scripts/test.sh`:
 
 ```sh
 sudo apt-get install -y gcc clang libc6-dev liburing-dev git curl python3 \
     wrk nghttp2-client netcat-openbsd strace linux-perf
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-cd ~ && cargo install oha --locked
 ```
 
 `GOOSE_COMMIT` and Linux on arm64, which has no Goose release archive, build Goose from
@@ -221,7 +218,7 @@ Bazzite 43 (2026-10-20):
 distrobox create -n goose -i registry.fedoraproject.org/fedora-toolbox:43
 distrobox enter goose -- sudo dnf install -y gcc clang cmake ninja-build \
     liburing-devel openssl-devel openssl perl git curl nghttp2 perf nmap-ncat \
-    strace binutils cargo
+    strace binutils
 ```
 
 | Tool | Source | Version used (2026-10-10) |
@@ -232,7 +229,6 @@ distrobox enter goose -- sudo dnf install -y gcc clang cmake ninja-build \
 | curl | apt | 8.18.0 |
 | wrk | apt | 4.1.0 (`4.1.0-4build3`) |
 | h2load | apt `nghttp2-client` | 1.68.0 |
-| oha | `cargo install oha --locked` | 1.16.0, with cargo 1.99.0 |
 | liburing | apt `liburing-dev` | 2.14, for the io_uring loop (`LOOP=uring`) |
 
 ### macOS
@@ -247,7 +243,7 @@ The platform mapping is in
 Install the tools with Homebrew, then run `scripts/test.sh`:
 
 ```sh
-brew install cmake wrk nghttp2 oha openssl@3
+brew install cmake wrk nghttp2 openssl@3
 ```
 
 The scripts fetch the `macos-arm64` or `macos-x64` release; CMake is for `GOOSE_COMMIT`
@@ -266,7 +262,6 @@ scripts' `ulimit -n 65536` fits the tested per-process fd limit.
 | curl, nc | macOS curl 8.7.1, Apple's nc |
 | wrk | Homebrew 4.2.0 |
 | h2load | Homebrew nghttp2 1.70.0 |
-| oha | Homebrew 1.16.0 |
 
 ### Windows
 
@@ -391,7 +386,7 @@ cd ~/goose-http && git fetch origin BRANCH && git checkout --detach FETCH_HEAD
 A checkout under `/mnt/c` works too, but WSL reaches it through a network filesystem:
 `test/run_tests.py` took 67 s there and 48 s in the clone (2026-10-22). Git in WSL
 also can't use a Windows `git worktree`, whose `.git` file names a Windows path. Run
-`cargo` from a Linux directory, as the Linux section's `cd ~` does: from the Windows
+`cargo`, for the benchmarks' Rust servers, from a Linux directory: from the Windows
 filesystem it inherits Windows configuration. Calling WSL from a Windows shell has
 traps of its own ([known issues](known-issues.md#wsl-from-a-windows-shell)).
 
@@ -401,8 +396,8 @@ To build and test the Linux loops on a Mac, use an arm64 Linux image with the Li
 toolchain and test tools, plus CMake, Ninja, and g++: Goose has no arm64 Linux release,
 so `scripts/goose.sh` builds the pinned release's source there. Build the image fresh
 rather than reusing a named image from a previous session. The test tools are liburing,
-curl, wrk, nghttp2-client, netcat-openbsd, python3, and oha, with libssl-dev and openssl
-for TLS; oha's release has a `oha-linux-arm64` binary. Benchmark builds also need
+curl, wrk, nghttp2-client, netcat-openbsd, and python3, with libssl-dev and openssl
+for TLS. Benchmark builds also need
 the Rust, Zig, Odin, and autotools versions of the
 [benchmark toolchain](../bench/README.md#toolchain), plus util-linux and procps.
 
@@ -489,7 +484,7 @@ kind of response.
 
 `scripts/test-http.sh` starts `build/server http` with 4 workers (`WORKERS`) and fails on
 the first error. It tests whichever loop `build/server` has, so build each loop and run it
-once per loop. It needs curl, wrk, h2load, oha, `nc`, and `python3`. Against the server
+once per loop. It needs curl, wrk, h2load, `nc`, and `python3`. Against the server
 it runs:
 
 - Response bytes, keep-alive, pipelining, request framing, and hostile requests.
@@ -525,9 +520,8 @@ then. `test-http.sh` waits up to 5 s for the port to free before each start.
 
 The load runs check correctness, not speed; their numbers aren't measurements.
 `test-http.sh` ignores wrk's timeouts, which WSL2's clock steps make up
-([known issues](known-issues.md#wrks-clock-in-wsl2)), and relies on h2load and oha,
-which use a monotonic clock. oha with `-z` aborts the requests in flight at the deadline
-and lists them as errors, so the test gives it a request count instead.
+([known issues](known-issues.md#wrks-clock-in-wsl2)), and relies on h2load, which uses
+a monotonic clock.
 
 ### Test the echo servers
 

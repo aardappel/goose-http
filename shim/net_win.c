@@ -26,6 +26,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifndef SOMAXCONN_HINT
+#define SOMAXCONN_HINT(b) (-(b))
+#endif
+
 /* Linux's errno values for the Winsock and Win32 errors that have one, as
    libuv's uv_translate_sys_error maps them. WSAESHUTDOWN, a send after
    shutdown, is EPIPE, as on Linux. */

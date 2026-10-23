@@ -344,7 +344,7 @@ static void ur_send_free(struct ur *u, struct ur_send *s) {
     s->file = NULL;
     if (s->cap <= UR_SMALL) {
         int k = 0;
-        while ((UR_MIN << k) < s->cap) k++;
+        while ((size_t)(UR_MIN << k) < s->cap) k++;
         s->next = u->spare[k];
         u->spare[k] = s;
     } else if (u->kept + s->cap <= UR_KEEP) {
