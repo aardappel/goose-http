@@ -1,21 +1,23 @@
 # 064: latency-1m's tail
 
-Status: in-progress
+Status: done (2026-10-23). The tail is the load generator's and the machine's, not
+goose-http's: zrk was saturated on the laptop, and with it no longer saturated, Aegon's
+tail was as large as Plod's or larger ("The laptop with more client threads").
 
 On a laptop, HttpArena's latency-1m showed goose-http and Plod with p99 of seconds while
 their workers had spare CPU. On the Mac, the same symptom appears only when zrk, the
 load generator, runs out of CPU, and it appears for tokio as well. In every Mac run,
-goose-http's io_uring loop held no request longer than about 20 ms. The open question
-is whether zrk was saturated on the laptop too.
+goose-http's io_uring loop held no request longer than about 20 ms.
 
 ## Acceptance criteria
 
 - [x] Reproduce the symptom on the Mac and find which side holds the requests
 - [x] Rule each loop suspect in or out with counters (`counters.patch`)
-- [ ] On the laptop, measure zrk's per-thread CPU during a tailed run, and rerun with
+- [x] On the laptop, measure zrk's per-thread CPU during a tailed run, and rerun with
       `THREADS=8`
-- [ ] If the tail stays with an idle client, find the cause in the loops; otherwise
-      record the client's limit where the HttpArena results are recorded
+- [x] If the tail stays with an idle client, find the cause in the loops; otherwise
+      record the client's limit where the HttpArena results are recorded (below, and in
+      Plod's task 047)
 
 ## The laptop's evidence (2026-10-23)
 
@@ -95,8 +97,14 @@ steady load:
 - Provided-buffer exhaustion (`ENOBUFS`): none with 3 workers at about 341 connections
   each. With one worker holding all 1,024 connections and 256 buffers, about 1,000 in
   20 s; the loop arms the receive again, and the connection waits one more pass. Not a
-  cause of the tail. The laptop's 4 workers have about 256 connections each, which is
-  `ring_buffers`' default.
+  cause of the tail. A later check (2026-10-23, same Mac VM, counters printed each
+  second) found every `ENOBUFS` in the first second of a run, while the clients opened
+  their connections, and none after, with up to 8,000 connections a worker: a receive
+  takes a buffer as it completes and the loop returns it in the same pass, so what
+  counts is how many receives land in one wait, not how many connections a worker
+  holds. 8,192 buffers instead of 256 changed neither rate nor latency beyond the
+  run-to-run spread, and took 3.5-6 times the memory (4 KiB a buffer: 64 MiB at 64
+  workers with 256, 4 GiB with 16,384), so `ring_buffers`' default stays.
 - Long passes: at most 5.1 ms. Goose code takes 5-6% of a worker's wall time; the rest
   is in `io_uring_enter`, which also runs the TCP work under `DEFER_TASKRUN`.
 - Persistent state across runs: four rounds against one server container stayed clean
@@ -108,11 +116,19 @@ worker to one CPU of its cpuset, and its HttpArena entry gives each ring 16,384 
 buffers and 8,192 entries, where goose-http has 256 and 4,096. Both are candidates for
 the laptop only if zrk turns out to have CPU to spare there.
 
-## Remaining
+## The laptop with more client threads (2026-10-23)
 
-The Mac reproduces the tail only by starving the client, so the laptop has to show
-whether its tail is the same. At the Mac's ratio of zrk's cost to the server's (about
-1.6 to 1), the laptop's 13.5 µs a request on the server would need about 4.3 CPUs of
-zrk at 200K, more than its 4 threads. Its rate ratio of 0.995 even for Aegon, against
-the Mac's 0.998, also points to a client at its limit. The check: zrk's per-thread CPU
-during a tailed run, and the same runs with `THREADS=8`.
+Same laptop and settings, Plod's entry at `cb355ac`, pidstat on zrk's threads:
+
+| zrk | rate_ratio | p50 | p99 | p99.9 | zrk per thread, avg / peak |
+|---|---|---|---|---|---|
+| `THREADS=4` | 0.9934 | 478 µs | 8.0 ms | 29.6 ms | 95-97% / 97-99% |
+| `THREADS=8` | 0.9952 | 146 µs | 10.6 ms | 58.8 ms | 83-87% / 85-91% |
+
+With 4 threads zrk is saturated; with 8 it isn't, and p50 drops threefold. The tail
+still comes and goes between runs, for every server: p99 across three runs was
+10.6, 255.6, and 17.1 ms for Plod, 29.5, 1.07, and 25.9 ms for Plod with the close
+that cancels by tag, and 578, 395, and 2,387 ms for Aegon. With the client no longer
+pegged, Aegon's tail was as large as Plod's or larger, so the earlier difference was
+run-to-run variance on a shared laptop, not goose-http. HttpArena's machine gives the
+load generator 64 threads, half the chip, so a saturated client isn't expected there.
