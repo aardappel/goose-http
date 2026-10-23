@@ -52,6 +52,7 @@ thread_fn worker(cfg: http::Config) {
 }
 
 fn main() {
+    http::exit_on_error(http::stop_on_signals());
     qlimit<Credit>(128);
     thread_spawn(publisher);
     http::run(http::Config { address: "127.0.0.1", port: 27893, workers: 1,

@@ -657,7 +657,8 @@ fn ring_loop<S, H>(cfg: Config, fresh: S, tls) -> Error {
 
     // Closes the listeners and the connections between requests, and gives
     // the rest cfg.grace_ms to finish. A listener's accept holds it open
-    // until the accept is cancelled.
+    // until the accept is cancelled: in a process a signal kills, until the
+    // kernel tears the ring down, after the exit (docs/known-issues.md).
     fn begin_stop() {
         stopping = true;
         stop_by = now + cfg.grace_ms;

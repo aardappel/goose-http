@@ -95,6 +95,26 @@ intermediate shell can otherwise expand variables before bash sees them.
 - Windows Python defaults can write cp1252 and CRLF, and shell heredocs add another
   escaping layer ([line endings on Windows](#line-endings-on-windows)).
 
+## Linux
+
+### A killed io_uring server's listener outlives it
+
+A server on io_uring that a signal kills, rather than stops, keeps its listener open
+for a few milliseconds after the process has exited: the multishot accept holds a
+reference to the socket, and the kernel tears the ring down on a workqueue after the
+exit. A successor binds the same port beside it, since both set `SO_REUSEPORT`, and the
+kernel can hand a new connection to the dying listener, which resets it as it closes.
+A readiness probe that lands there passes before the successor listens, and the next
+connect is refused. With `http::stop_on_signals`, `SIGTERM` stops the loop instead,
+which cancels the accept and closes the listener before the process exits. The epoll
+loop's listener closes with the process either way.
+
+`scripts/test-drain.py` restarts `examples/drain.goose` on one port, from `LOOP=uring`
+to `LOOP=epoll`. Before the example called `stop_on_signals`, the epoll half failed
+with `ECONNRESET` or `ECONNREFUSED` in 11 of 40 runs in an arm64 Linux container with native
+io_uring (kernel 7.0, Docker Desktop on macOS): `waitpid` returned with the uring
+server's listener still in `/proc/net/tcp`, for 2 to 6 ms (2026-10-23).
+
 ## Benchmarks
 
 - When V fails to compile the C it generated, it downloads a V release and retries with

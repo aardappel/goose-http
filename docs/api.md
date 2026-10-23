@@ -852,6 +852,10 @@ fn main() {
 }
 ```
 
+A server on io_uring that a signal kills instead leaves its listener open briefly after
+it exits, and a successor on the same port can lose connections to it
+([known issues](known-issues.md#a-killed-io_uring-servers-listener-outlives-it)).
+
 ### Event loops
 
 The program calls one. Goose compiles a generic function only where it's called, so the
