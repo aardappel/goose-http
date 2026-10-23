@@ -1,12 +1,14 @@
 # 065: Avoid copying immediately accepted large sends
 
-Status: in-progress
+Status: cancelled
 
 The readiness-based ring can submit a large buffer during the extern call and own
 only its unsent tail. Small sends remain queued, and all completions remain deferred.
 
-The 2026-10-23 upstream review finds a server-bound throughput regression. This
-implementation is retained for the experiment, but is not recommended for merge.
+Cancelled at the consumer's request on 2026-10-23 after the upstream review finds
+a 13-28% server-bound throughput regression. The consumer removes its patch and
+uses unpatched upstream. The code and measurements remain in this closed PR's
+history; a future send proposal must establish a server-bound benefit first.
 
 ## Acceptance criteria
 

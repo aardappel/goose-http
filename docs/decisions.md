@@ -115,9 +115,9 @@ queued: immediate output wakes clients while the loop is still processing a
 pipelined receive, and the all-size experiment lost plaintext throughput.
 The ring owns the unsent tail before returning and reports even a complete
 inline send from `ur_wait`. Native io_uring retains the 64 KB threshold.
-The 2026-10-23 review finds a 13-28% server-bound throughput loss, so this
-experiment is not recommended for merge; its client-limited gain does not establish
-a capacity improvement. See the [review record](../bench/results/2026-10-22-campfire-send-copy/summary.md).
+The 2026-10-23 review finds a 13-28% server-bound throughput loss. The consumer
+retires this experiment and removes its patch; its client-limited gain does not
+establish a capacity improvement. See the [review record](../bench/results/2026-10-22-campfire-send-copy/summary.md).
 
 ## Files of 64 KB or more go to the loop
 

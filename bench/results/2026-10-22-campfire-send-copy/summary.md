@@ -2,6 +2,10 @@
 
 ## Review outcome, 2026-10-23
 
+This experiment is retired and PR #3 is closed without merging. The consumer
+removes its pinned send-copy patch and retains unpatched upstream at `75f03629`,
+including goose-compress v0.1.3. The measurements below remain historical evidence.
+
 The [upstream review](https://github.com/kaitk/goose-http/pull/3#issuecomment-6371183040)
 finds that inline sending costs 13-28% throughput on server-bound 21 KiB responses.
 Its double-copy control has no measurable cost. The review reproduces a gain only
