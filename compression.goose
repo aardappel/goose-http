@@ -4,7 +4,7 @@
 // which its root file declares at the tag this file names:
 //
 //   import http from "github.com/kaitk/goose-http@<tag>";
-//   import compress from "github.com/kaitk/goose-compress@v0.1.2";
+//   import compress from "github.com/kaitk/goose-compress@v0.1.3";
 //   import http.compression;
 //
 // A whole response:
@@ -20,7 +20,7 @@
 namespace http;
 
 import std;
-import compress from "github.com/kaitk/goose-compress@v0.1.2";
+import compress from "github.com/kaitk/goose-compress@v0.1.3";
 import message;
 import media;
 
