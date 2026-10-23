@@ -350,15 +350,17 @@ int32_t ur_send(int64_t h, int32_t fd, uint64_t tag, ur_bytes data) {
     s = NULL;
     uint32_t pre = 0;
     if (!f->head && data.len >= UR_INLINE) {
+        /* The completion's slot comes first: once every byte has gone out,
+           the send can't fail. */
+        if (u->nsent == u->capsent) {
+            int32_t cap = u->capsent ? u->capsent * 2 : 64;
+            ur_completion *g = realloc(u->sent, (size_t)cap * sizeof *g);
+            if (!g) return -ENOMEM;
+            u->sent = g;
+            u->capsent = cap;
+        }
         ssize_t w = send(fd, data.data, (size_t)data.len, MSG_NOSIGNAL | MSG_DONTWAIT);
         if (w == data.len) {
-            if (u->nsent == u->capsent) {
-                int32_t cap = u->capsent ? u->capsent * 2 : 64;
-                ur_completion *g = realloc(u->sent, (size_t)cap * sizeof *g);
-                if (!g) return -ENOMEM;
-                u->sent = g;
-                u->capsent = cap;
-            }
             u->sent[u->nsent++] = (ur_completion){ .tag = tag, .res = (int32_t)w, .buf = -1, .more = 0, .send = 1 };
             return 0;
         }
