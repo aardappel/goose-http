@@ -270,7 +270,8 @@ fn content_type_of(name: const u8[:]) -> const u8[:] {
     if eq_fold(x, "html") || eq_fold(x, "htm") { return "text/html; charset=utf-8"; }
     if eq_fold(x, "css") { return "text/css; charset=utf-8"; }
     if eq_fold(x, "js") || eq_fold(x, "mjs") { return "text/javascript; charset=utf-8"; }
-    if eq_fold(x, "json") { return "application/json"; }
+    if eq_fold(x, "json") || eq_fold(x, "map") { return "application/json"; }
+    if eq_fold(x, "webmanifest") { return "application/manifest+json"; }
     if eq_fold(x, "txt") { return "text/plain; charset=utf-8"; }
     if eq_fold(x, "csv") { return "text/csv; charset=utf-8"; }
     if eq_fold(x, "xml") { return "application/xml"; }
@@ -286,6 +287,7 @@ fn content_type_of(name: const u8[:]) -> const u8[:] {
     if eq_fold(x, "woff") { return "font/woff"; }
     if eq_fold(x, "woff2") { return "font/woff2"; }
     if eq_fold(x, "ttf") { return "font/ttf"; }
+    if eq_fold(x, "otf") { return "font/otf"; }
     if eq_fold(x, "mp4") { return "video/mp4"; }
     if eq_fold(x, "webm") { return "video/webm"; }
     if eq_fold(x, "mp3") { return "audio/mpeg"; }

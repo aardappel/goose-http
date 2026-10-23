@@ -23,6 +23,9 @@ fn main() {
     print("paths: ", outside.len, " outside the directory refused");
     assert(http::content_type_of("a/b.HTML") == "text/html; charset=utf-8");
     assert(http::content_type_of("x.tar.gz") == "application/gzip");
+    assert(http::content_type_of("app.js.map") == "application/json");
+    assert(http::content_type_of("site.webmanifest") == "application/manifest+json");
+    assert(http::content_type_of("a.otf") == "font/otf");
     assert(http::content_type_of("README") == "application/octet-stream");
     assert(http::content_type_of("a.d/README") == "application/octet-stream");
     let none, missing = http::open_file("no such file here");

@@ -2,6 +2,15 @@
 
 What each tag adds. Each release names the Goose compiler it was built and tested with.
 
+## Unreleased
+
+Added:
+
+- `content_type_of` knows `.map` (`application/json`), `.webmanifest`
+  (`application/manifest+json`), and `.otf` (`font/otf`).
+- `fuzz/`: libFuzzer targets for the request head and chunked body, HPACK, h2 frames,
+  and multipart ([development](docs/development.md#fuzz-the-parsers)).
+
 ## v0.5.5 (2026-10-23)
 
 Drain credits for publishers on upgraded connections. Goose `v2026.3`, goose-hash
